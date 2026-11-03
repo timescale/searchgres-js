@@ -1,35 +1,19 @@
-import type postgres from "postgres";
-import type { VectorType } from "../../config.ts";
-import { runSql } from "../../sql/exec.ts";
-
-/**
- * Create the schema-local `batch_upsert` write routine. Its body is part of the
- * immutable schema format; it is created inside the caller's provisioning
- * transaction and never opens its own.
- */
-export async function createBatchUpsertRoutine(
-  tx: postgres.TransactionSql,
-  indexSchema: string,
-  vectorType: VectorType,
-): Promise<void> {
-  await runSql(
-    tx`
-        create function ${tx(indexSchema)}.batch_upsert
-        ( _ids uuid[]
-        , _contents text[]
-        , _metas jsonb
-        , _trees public.ltree[]
-        , _temporals tstzrange[]
-        , _names text[]
-        , _embeddings public.${tx(vectorType)}[]
-        , _on_conflict text default 'replace'
-        )
-        returns table (ord bigint, id uuid, status text)
-        language plpgsql volatile security invoker
-        set timezone to 'UTC'
-        set datestyle to 'ISO, YMD'
-        set search_path to pg_catalog, public, pg_temp
-        as $function$
+create function {{schema_ident}}.batch_upsert
+( _ids uuid[]
+, _contents text[]
+, _metas jsonb
+, _trees public.ltree[]
+, _temporals tstzrange[]
+, _names text[]
+, _embeddings public.{{vector_type_ident}}[]
+, _on_conflict text default 'replace'
+)
+returns table (ord bigint, id uuid, status text)
+language plpgsql volatile security invoker
+set timezone to 'UTC'
+set datestyle to 'ISO, YMD'
+set search_path to pg_catalog, public, pg_temp
+as $function$
         -- The out columns (id, ...) shadow table columns inside the body; the
         -- body never reads them as variables, so resolve ambiguity to columns.
         #variable_conflict use_column
@@ -90,12 +74,12 @@ export async function createBatchUpsertRoutine(
             (
               select m.id
               from unnest(_ids, _names) u(id, name)
-              join ${tx(indexSchema)}.record m on m.id = u.id
+              join {{schema_ident}}.record m on m.id = u.id
               where u.id is not null and u.name is null
               union all
               select m.id
               from unnest(_trees, _names) u(tree, name)
-              join ${tx(indexSchema)}.record m on m.tree = u.tree and m.name = u.name
+              join {{schema_ident}}.record m on m.tree = u.tree and m.name = u.name
               where u.name is not null
             ) x
             group by x.id having count(*) > 1
@@ -126,7 +110,7 @@ export async function createBatchUpsertRoutine(
           -- Named rows (with OR without an explicit id) dedup on (tree, name).
           , named_mutation as
           (
-            insert into ${tx(indexSchema)}.record as record
+            insert into {{schema_ident}}.record as record
               (id, content, meta, tree, temporal, name, embedding)
             select id, content, meta, tree, temporal, name, embedding
             from source
@@ -159,7 +143,7 @@ export async function createBatchUpsertRoutine(
           -- an id-keyed replace can also move or rename the row.
           , id_mutation as
           (
-            insert into ${tx(indexSchema)}.record as record
+            insert into {{schema_ident}}.record as record
               (id, content, meta, tree, temporal, name, embedding)
             select id, content, meta, tree, temporal, name, embedding
             from source
@@ -195,7 +179,7 @@ export async function createBatchUpsertRoutine(
           -- Anonymous rows always insert (their generated id is unique).
           , anonymous_mutation as
           (
-            insert into ${tx(indexSchema)}.record as record
+            insert into {{schema_ident}}.record as record
               (id, content, meta, tree, temporal, name, embedding)
             select id, content, meta, tree, temporal, name, embedding
             from source
@@ -268,7 +252,7 @@ export async function createBatchUpsertRoutine(
                 else
                 (
                   select r.id
-                  from ${tx(indexSchema)}.record r
+                  from {{schema_ident}}.record r
                   where r.tree::text = e->>'tree' and r.name = e->>'name'
                 )
               end
@@ -277,12 +261,4 @@ export async function createBatchUpsertRoutine(
           from jsonb_array_elements(coalesce(_rows, '[]'::jsonb)) e
           order by (e->>'position')::bigint;
         end;
-        $function$
-      `,
-    {
-      spanName: "createBatchUpsertFunction",
-      dbOperationName: "CREATE",
-      namespace: indexSchema,
-    },
-  );
-}
+        $function$;

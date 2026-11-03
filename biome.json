@@ -33,8 +33,8 @@
               "level": "error",
               "options": {
                 "deniedGlobals": {
-                  "Bun": "Core must run on Node, Bun, and Deno.",
-                  "Deno": "Core must run on Node, Bun, and Deno."
+                  "Bun": "Core must run on Node and Bun.",
+                  "Deno": "Core must run on Node and Bun."
                 }
               }
             },
