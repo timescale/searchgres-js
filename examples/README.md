@@ -26,8 +26,8 @@ npm install searchgres postgres @ai-sdk/openai
 node index.ts
 ```
 
-Running TypeScript directly requires Node 22.18 or newer. Alternatively use Bun,
-Deno, or your application's TypeScript build.
+Running TypeScript directly requires Node 22.18 or newer. Alternatively use Bun
+or your application's TypeScript build.
 
 The four create-and-search programs use a unique temporary schema for each run
 and drop it in `finally`, including when a later operation fails. They are safe

@@ -73,6 +73,24 @@ test("index lifecycle spans parent their SQL and expose index shape", async () =
     const createSql = sqlChildren(created.spanContext().spanId);
     assert.ok(createSql.length > 5, "create operation did not parent its SQL");
     assert.ok(createSql.every((span) => span.kind === SpanKind.CLIENT));
+    const { schemaDefinitions, indexDefinitions } = await import(
+      "../src/db/definitions.ts"
+    );
+    for (const definition of [...schemaDefinitions, ...indexDefinitions]) {
+      const statement = createSql.find(
+        (span) => span.name === definition.spanName,
+      );
+      assert.ok(statement, definition.source);
+      assert.equal(
+        statement.attributes["db.operation.name"],
+        definition.dbOperationName,
+      );
+      assert.equal(statement.attributes["db.namespace"], schema);
+      const text = statement.attributes["db.query.text"];
+      assert.equal(typeof text, "string");
+      assert.ok(String(text).length > 0, definition.source);
+      assert.ok(!String(text).includes("{{"), definition.source);
+    }
 
     exporter.reset();
     await openIndex(sql, schema, { embedding: controllableEmbeddingModel() });
@@ -99,6 +117,40 @@ test("index lifecycle spans parent their SQL and expose index shape", async () =
   } finally {
     await dropTestSchema(sql, schema);
   }
+});
+
+test("unsafe definition failures retain SQL text, error status and typed timeout mapping", async () => {
+  const { executeDefinitions } = await import("../src/db/definitions.ts");
+  const { indexSqlContext } = await import("../src/db/template.ts");
+  const { StatementTimeoutError } = await import("../src/errors.ts");
+  const schema = randomTestSchema();
+  const context = indexSqlContext(schema, { dimensions: 4 }, "'english'");
+  const statement = "select pg_catalog.pg_sleep(1)";
+  exporter.reset();
+  await assert.rejects(
+    sql.begin(async (tx) => {
+      await tx`set local statement_timeout = '20ms'`;
+      await executeDefinitions(tx, context, [
+        {
+          sql: statement,
+          source: "test/timeout.sql",
+          spanName: "testDefinitionTimeout",
+          dbOperationName: "SELECT",
+        },
+      ]);
+    }),
+    StatementTimeoutError,
+  );
+  await provider.forceFlush();
+  const failed = exporter
+    .getFinishedSpans()
+    .find((span) => span.name === "testDefinitionTimeout");
+  assert.ok(failed);
+  assert.equal(failed.instrumentationScope.name, "searchgres/sql");
+  assert.equal(failed.attributes["db.query.text"], statement);
+  assert.equal(failed.attributes["db.namespace"], schema);
+  assert.equal(failed.status.code, SpanStatusCode.ERROR);
+  assert.ok(failed.events.some((event) => event.name === "exception"));
 });
 
 test("public index operations emit one domain span with safe useful attributes", async () => {

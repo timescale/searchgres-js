@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    // Modern Node ESM. `nodenext` makes TypeScript resolve — and emit —
-    // exactly what Node and Deno need at runtime.
+    // Node-compatible ESM resolution for declarations, source tests, and CLI
+    // compilation. Core JavaScript is bundled separately by Bun for Node.
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "es2023",
@@ -11,9 +11,9 @@
       "searchgres": ["./packages/core/src/index.ts"]
     },
 
-    // Source imports name the real file (`./foo.ts`); the compiler rewrites the
-    // specifier to `./foo.js` on emit. Keeps source honest and output correct
-    // without a bundler, and lets Bun/Deno run the sources directly in dev.
+    // Source imports name the real file (`./foo.ts`); TypeScript rewrites the
+    // specifier to `./foo.js` when emitting declarations/CLI JavaScript. Node
+    // source tests and Bun can resolve the original files directly.
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
 

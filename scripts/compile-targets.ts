@@ -35,6 +35,7 @@ for (const { target, suffix } of targets) {
       "build",
       entrypoint,
       "--compile",
+      "--loader=.sql:text",
       `--target=${target}`,
       `--outfile=${output}`,
     ],

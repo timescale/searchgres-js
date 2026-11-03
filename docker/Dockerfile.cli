@@ -1,5 +1,5 @@
 # Keep this tag in step with the pinned /bun wrapper.
-FROM oven/bun:1.4.0 AS build
+FROM oven/bun:1.4.4 AS build
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY packages/core/package.json packages/core/package.json

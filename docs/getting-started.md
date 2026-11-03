@@ -15,7 +15,7 @@ You will:
 
 ## Prerequisites
 
-- Node 22+ (or Bun 1.4+, or Deno 2+)
+- Node 22+ (or Bun 1.4+)
 - A PostgreSQL 18 database with the `vector`, `pg_textsearch`, and `ltree`
   extensions available. If you don't have one, see
   [Install searchgres.js](installation.md) for a one-command Docker setup.

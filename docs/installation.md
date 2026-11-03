@@ -23,7 +23,6 @@ follow [Get started](getting-started.md).
 
 - Node 22 or newer
 - Bun 1.4 or newer
-- Deno 2 or newer
 
 Published consumers use compiled JavaScript. Running the repository's `.ts`
 examples directly with Node requires Node 22.18 or newer.

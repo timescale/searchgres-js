@@ -1,0 +1,2 @@
+# Preserve the SQL byte-fidelity fixture's intentional mixed LF/CRLF endings.
+packages/core/src/test/fixtures/text.sql -text whitespace=cr-at-eol

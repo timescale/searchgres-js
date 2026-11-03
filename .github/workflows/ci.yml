@@ -69,66 +69,24 @@ jobs:
       # local `check:full` run rather than duplicated as workflow shell.
       - run: ./bun scripts/with-postgres.ts ./bun run test:db
 
-  # The unit tests run from TypeScript source, so nothing above ever loads the
-  # compiled output. This job packs the tarball, installs it into a scratch
-  # project, and imports it *by package name* — which is the only way to
-  # exercise the exports map, the files array, and emitted ESM specifiers the
-  # way a real consumer would.
+  # Source tests do not qualify the published artifact. Install the actual
+  # tarball, typecheck it, provision/search/drop on Node and Bun, and run a
+  # compiled consumer with its source/package files removed.
   artifact:
-    name: Packaged install (${{ matrix.runtime }})
+    name: Packaged install (node ${{ matrix.node }} + bun)
     runs-on: ubuntu-latest
     needs: check
     strategy:
       fail-fast: false
       matrix:
-        runtime: [node, bun, deno]
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v5
-      # Node is needed for the tarball's prepack hook and, for the node matrix
-      # leg, to import the result.
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
-      - uses: denoland/setup-deno@v2
-        if: matrix.runtime == 'deno'
-        with:
-          deno-version: v2.x
+          node-version: ${{ matrix.node }}
       - run: ./bun install --frozen-lockfile
-      - run: ./bun run build
-
-      # A real consumer installs with npm, so the scratch project does too —
-      # this leg deliberately exercises the npm install path the published
-      # package is consumed through, whatever runtime imports it afterwards.
-      - name: Pack and install into a scratch project
-        run: |
-          ./bun pm pack --cwd packages/core --destination /tmp
-          mkdir -p /tmp/consumer
-          cd /tmp/consumer
-          npm init -y > /dev/null
-          npm install /tmp/searchgres-*.tgz
-
-      - name: Legal files are present in the published package
-        run: |
-          cd /tmp/consumer/node_modules/searchgres
-          for f in LICENSE NOTICE README.md; do
-            test -s "$f" || { echo "missing from published package: $f"; exit 1; }
-          done
-
-      - name: Import by package name
-        working-directory: /tmp/consumer
-        run: |
-          # "searchgres", not a relative path: resolving the bare specifier is
-          # what proves the exports map and files array are correct.
-          script='const m = await import("searchgres");
-                  if (!m.LIBRARY_VERSION) throw new Error("LIBRARY_VERSION missing from the published entry point");
-                  console.log("ok", m.LIBRARY_VERSION);'
-          case "${{ matrix.runtime }}" in
-            node) node --input-type=module -e "$script" ;;
-            # The pinned wrapper, by absolute path: the scratch project is
-            # outside the repository, and bun is not otherwise on PATH here.
-            bun)  "$GITHUB_WORKSPACE/bun" -e "$script" ;;
-            deno) deno eval --no-lock "$script" ;;
-          esac
+      - run: ./bun scripts/with-postgres.ts ./bun run test:package
 
   # Branch protection requires only this stable aggregate context. Matrix legs
   # and implementation-specific jobs can change without silently weakening the

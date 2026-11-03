@@ -20,7 +20,7 @@ required for database/evaluation checks.
 
 | Package | Responsibility |
 | --- | --- |
-| `packages/core` | Runtime-neutral published `searchgres` library, Node/Bun/Deno. |
+| `packages/core` | Published `searchgres` library, Node/Bun-compatible ESM. |
 | `packages/cli` | Private Bun source for one compiled `searchgres` binary: direct DB commands, provisioning, workers, MCP stdio, config, filter DSL, presentation, tokenizers. |
 
 Core never depends on the CLI. The CLI calls core directly and owns its pools,
@@ -62,6 +62,76 @@ Cross-package sequencing stays in root `package.json`: build core before CLI.
 Package scripts do not call other packages. Avoid wildcard orchestration that
 continues downstream after a dependency failed. The package-local `dist/`
 contains implementation build output, not a published CLI API.
+
+## Core build and SQL text imports
+
+Core's build runs `scripts/build-core.ts`: TypeScript emits declarations with
+`stripInternal`, then pinned Bun bundles `src/index.ts` into Node-targeted ESM
+with dependencies external and a linked source map containing sources. The build
+clears stale output and removes partial output on failure. Core's prepack hook
+rebuilds before staging legal files, so packing does not reuse stale JavaScript.
+Consumers do not need Bun, a loader, or runtime access to source SQL files.
+
+SQL authoring uses static text imports and the ambient `src/sql.d.ts` declaration:
+
+```ts
+import definition from "./definition.sql" with { type: "text" };
+```
+
+Both the library build and CLI compilation explicitly configure `.sql` as text.
+This matters on Bun 1.4.4: text attributes on a re-export alone can otherwise
+produce a filesystem asset path instead of an embedded string. Do not introduce
+runtime file loading. Persisted index definitions are authored in
+`packages/core/src/db/sql/`, one execution unit per file. The explicit manifest
+in `db/definitions.ts` preserves dependency order and per-statement SQL spans.
+TypeScript still owns validation, preflight, transactions, locks, timeouts,
+parameterized runtime queries, and the final bound schema-version insert.
+
+`db/template.ts` uses Memory Engine-style `{{name}}` placeholders with a closed
+vocabulary and prepared identifier/literal/numeric fragments. Literal fragments
+include their quotes; do not add another pair in SQL. Numeric fragments come
+from validated config, and the text configuration literal comes from
+`pg_catalog.quote_literal`. Substitution is single-pass; unknown/malformed or
+missing tokens fail. No includes, loops, expressions or signature directives.
+The allowed names and their constructors live together in `template.ts`.
+
+Format 2 is still immutable: extraction does not make these files migrations.
+There is no ledger, replacement-function helper, or upgrade API. Function-body
+indentation intentionally matches the old definitions exactly. Do not reformat
+bodies or update catalog goldens just to make an equivalence test pass. The
+pre-extraction fixtures, provenance and capture instructions are under
+`packages/core/test/fixtures/schema-format-2/`. Their integration tests compare
+both vector types with default/custom index settings, and retain exact function
+bodies/settings/signatures plus tables, indexes, constraints, triggers, sequences
+and object inventory. Capture runs only as an explicit maintenance action
+against committed old DDL, never automatically during tests.
+
+Node source tests preload `scripts/sql-loader.mjs`; it handles SQL imports only
+and delegates other module loading to Node. The loader is development-only and
+is exercised on Node 22.18+ and 24. Bun source tests use native text imports.
+
+```sh
+./bun run --filter searchgres build
+./bun test scripts/build-core.test.ts
+./bun scripts/with-postgres.ts ./bun run test:package
+# Or, against an explicitly configured disposable database:
+TEST_DATABASE_URL=postgresql://... ./bun run test:package
+```
+
+`test:package` packs the actual core, installs it with npm in an isolated temporary
+consumer, typechecks consumer expressions (including `stripInternal` guards),
+and exercises create/open/write/search/drop for both vector types on Node and
+Bun. It also builds a compiled consumer using direct SQL imports, deletes the
+consumer's source/package files, and runs the binary. The SQL probe is a separate
+test module, never a public export or part of the package. Installed declarations
+use the workspace's `skipLibCheck: true`: current AI SDK dependency declarations
+fail their own `exactOptionalPropertyTypes` checks with it disabled. Consumer
+expressions still use strict checking. npm installation requires registry access.
+
+`test:package` runs at the end of `test:db`/`check:full` and in the Node 22/24
+artifact CI matrix; `test:unit` covers SQL fidelity, external dependencies,
+declarations/maps, stale output, and failed-build cleanup without a database.
+It does not add a migration API or change schema format 2.
 
 ## Filter DSL
 
@@ -176,7 +246,7 @@ Core remains the unscoped npm package `searchgres`. A stable `vX.Y.Z` tag starts
 `.github/workflows/release.yml`. Its commit must be on `main` and its version
 must match `packages/core/package.json`. Release checks build/pack core, install
 it into a scratch npm consumer, verify its public entry point/legal files, and
-publish with provenance. CI tests the packed core under Node, Bun, and Deno.
+publish with provenance. CI tests the packed core under Node 22/24 and Bun.
 
 Before tagging:
 

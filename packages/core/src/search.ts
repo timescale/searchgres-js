@@ -325,7 +325,7 @@ function normalizeFilter(filter: FilterNode, ranked: boolean): CanonicalFilter {
 /**
  * Two-pass helper: guard/regex analysis that also rejects regex under `not`.
  *
- * Deliberately duplicated as `analyze_filter` in `db/routines/search.ts` so
+ * Deliberately duplicated in `db/sql/routines/search/analyze-filter.sql` so
  * direct-SQL callers of `search_records` get the same protection; this copy
  * gives library callers a typed error before any round trip. The two must
  * implement identical rules — change both together.

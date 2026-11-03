@@ -5,15 +5,12 @@
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
+    "emitDeclarationOnly": true,
     // Members tagged `@internal` (Index.sql, the Index constructor) are
     // implementation plumbing, not API; keep them out of the published types.
     "stripInternal": true,
-    // The tarball ships dist/ only, so a map that merely points at ../src/
-    // resolves to nothing for consumers. Embed the sources in the .js.map so
-    // stack traces and debuggers still reach TypeScript, and skip .d.ts.map
-    // files entirely (they cannot inline and would only dangle).
-    "sourceMap": true,
-    "inlineSources": true,
+    // Bun emits the JavaScript bundle and linked map with embedded sources.
+    // Declaration maps cannot inline sources and would dangle in the tarball.
     "declarationMap": false,
     "tsBuildInfoFile": "tsconfig.build.tsbuildinfo"
   },

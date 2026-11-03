@@ -44,12 +44,12 @@
     "url": "https://github.com/timescale/searchgres-js/issues"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "../../bun ../../scripts/build-core.ts",
     "clean": "rm -rf dist tsconfig.build.tsbuildinfo",
     "typecheck": "tsc -p tsconfig.json",
-    "test:unit": "node --test \"src/**/*.test.ts\"",
-    "test:db": "node --test \"test/**/*.integration.test.ts\"",
-    "prepack": "node ../../scripts/copy-package-files.mjs",
+    "test:unit": "node --import ../../scripts/sql-loader.mjs --test \"src/**/*.test.ts\"",
+    "test:db": "node --import ../../scripts/sql-loader.mjs --test \"test/**/*.integration.test.ts\"",
+    "prepack": "../../bun run build && node ../../scripts/copy-package-files.mjs",
     "postpack": "node ../../scripts/copy-package-files.mjs --clean"
   },
   "dependencies": {

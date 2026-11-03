@@ -180,7 +180,7 @@ models, agent behavior, samples, and metrics also affect end-to-end scores.
   [`pgvector`](https://github.com/pgvector/pgvector),
   [`pg_textsearch`](https://github.com/timescale/pg_textsearch), and `ltree`.
   `pg_textsearch` must be included in `shared_preload_libraries`.
-- **Node ≥ 22**, **Bun ≥ 1.4**, or **Deno ≥ 2.0**.
+- **Node ≥ 22** or **Bun ≥ 1.4**.
 
 `createIndex()` installs missing extensions when its database role has the
 necessary privileges. The repository includes a PostgreSQL Dockerfile with the
