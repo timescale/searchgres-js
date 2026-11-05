@@ -11,7 +11,8 @@ migration layout:
   `{{schema_ident}}.migration`. Released files are locked in
   `incremental/frozen.txt`; see [`incremental/README.md`](incremental/README.md).
 - `idempotent/`: numbered repeatable trigger and routine files
-  (`001_triggers.sql`, `002_records.sql`, `003_tree.sql`, `004_search.sql`)
+  (`001_triggers.sql`, `002_records.sql`, `003_tree.sql`, `004_search.sql`,
+  `005_embedding_queue.sql`)
   executed in alphanumeric order on every creation and migration pass; see
   [`idempotent/README.md`](idempotent/README.md).
 

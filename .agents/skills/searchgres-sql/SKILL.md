@@ -22,10 +22,11 @@ packages/core/src/db/sql/
 │   ├── 001_initial.sql       # Tables, constraints, and indexes (record, embedding_queue)
 │   └── frozen.txt            # SHA-256 hashes of released incremental files
 └── idempotent/
-    ├── 001_triggers.sql      # Trigger functions + DROP TRIGGER IF EXISTS / CREATE TRIGGER
-    ├── 002_records.sql       # batch_upsert, get_record*, patch_record, delete_record*
-    ├── 003_tree.sql          # tree_view, move_tree, copy_tree, delete_tree, count_tree*, list_tree
-    └── 004_search.sql        # analyze_filter, compile_filter, search_records, hybrid_search_records
+    ├── 001_triggers.sql        # Trigger functions + CREATE OR REPLACE TRIGGER
+    ├── 002_records.sql         # batch_upsert, get_record*, patch_record, delete_record*
+    ├── 003_tree.sql            # tree_view, move_tree, copy_tree, delete_tree, count_tree*, list_tree
+    ├── 004_search.sql          # analyze_filter, compile_filter, search_records, hybrid_search_records
+    └── 005_embedding_queue.sql # claim_embedding_batch, complete/fail/release_embedding, queue stats/failures/prune
 ```
 
 Execution order inside the per-schema advisory lock (`advisoryLockKey(schema)`) and transaction-local `search_path = pg_catalog, public, pg_temp`:
@@ -91,19 +92,17 @@ Every stateful change must go in a new `packages/core/src/db/sql/incremental/NNN
 ### Template tokens (`packages/core/src/db/template.ts`)
 SQL files are rendered via `renderSqlTemplate`, which accepts only branded `SqlFragment` values (`sqlIdentifier`, `sqlLiteral`, `sqlNumber`). Both `createIndex` and `migrateIndex` supply the full `ProvisioningSqlContext` (in `migrateIndex`, `readIndexShape` reconstructs the index's vector and BM25 settings from `pg_catalog`):
 
-| Token | Kind | Example rendered value |
+| Token | Available in | Example rendered value |
 | --- | --- | --- |
-| `{{schema_ident}}` | identifier | `"docs_index"` |
-| `{{schema_literal}}` | string literal | `'docs_index'` |
-| `{{schema_version_literal}}` | string literal | `'3'` |
-| `{{vector_column_type}}` | SQL fragment | `public.halfvec(1536)` or `public.vector(1536)` |
-| `{{hnsw_opclass}}` | SQL fragment | `public.halfvec_cosine_ops` or `public.vector_cosine_ops` |
-| `{{hnsw_m}}` | number | `16` |
-| `{{hnsw_ef_construction}}` | number | `64` |
-| `{{bm25_text_config}}` | identifier/qualified | `pg_catalog."english"` |
-| `{{bm25_text_config_literal}}` | string literal | `'english'` |
-| `{{bm25_k1}}` | number | `1.2` |
-| `{{bm25_b}}` | number | `0.75` |
+| `{{schema_ident}}` | creation & migration | `"docs_index"` |
+| `{{schema_comment_literal}}` | creation & migration | `'searchgres index'` |
+| `{{vector_type_ident}}` | creation & migration | `"halfvec"` or `"vector"` |
+| `{{dimensions_int}}` | creation & migration | `1536` |
+| `{{cosine_opclass_ident}}` | creation & migration | `"halfvec_cosine_ops"` or `"vector_cosine_ops"` |
+| `{{bm25_index_literal}}` | creation & migration | `'docs_index.record_content_bm25_idx'` |
+| `{{text_config_literal}}` | creation only | `'english'` |
+| `{{bm25_k1_number}}`, `{{bm25_b_number}}` | creation only | `1.2`, `0.75` |
+| `{{hnsw_m_int}}`, `{{hnsw_ef_construction_int}}` | creation only | `16`, `64` |
 
 ### Qualification invariants
 - **Schema objects**: Always qualify index tables, views, and routines with `{{schema_ident}}.` (never rely on `search_path` containing the index schema).
