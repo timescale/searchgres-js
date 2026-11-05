@@ -15,6 +15,13 @@ export type {
   RetryEmbeddingFailuresOptions,
   RetryEmbeddingFailuresResult,
 } from "./db/embedding-queue.ts";
+export {
+  type EnsureExtensionsOptions,
+  type ExtensionInfo,
+  type ExtensionRequirement,
+  ensureExtensions,
+  REQUIRED_EXTENSIONS,
+} from "./db/extensions.ts";
 export { dropIndex } from "./drop-index.ts";
 export { noEmbedding } from "./embedding.ts";
 export type {

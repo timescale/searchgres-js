@@ -139,7 +139,7 @@ export async function readMigrationLedgerState(
       }[]
     >`
       select
-        pg_catalog.pg_has_role(current_user, n.nspowner, 'USAGE') as is_owner
+        n.nspowner = (select pg_catalog.to_regrole(current_user)::oid) as is_owner
       , c.relkind::text as migration_relkind
       , coalesce
         ( c.relkind = 'r'

@@ -52,8 +52,9 @@ indexes. Create it once. `dimensions` must match your embedding model —
 `text-embedding-3-small` produces 1536-dimensional vectors.
 
 ```ts
-import { createIndex } from "searchgres";
+import { createIndex, ensureExtensions } from "searchgres";
 
+await ensureExtensions(sql);
 await createIndex(sql, "docs_index", { dimensions: 1536 });
 ```
 

@@ -76,10 +76,10 @@ const migrationOptionsSchema = z.strictObject({
   transactionTimeoutMs: z.int().nonnegative().optional(),
 });
 
-/** @internal Shared option normalizer for `createIndex` and `migrateIndex`. */
+/** @internal Shared option normalizer for `createIndex`, `migrateIndex`, and `ensureExtensions`. */
 export function normalizeMigrationOptions(
   input: unknown,
-  operationName: "createIndex" | "migrateIndex",
+  operationName: "createIndex" | "migrateIndex" | "ensureExtensions",
 ): {
   readonly lockTimeout: string;
   readonly transactionTimeout: string;

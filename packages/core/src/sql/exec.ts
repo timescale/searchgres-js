@@ -38,17 +38,17 @@ export function sqlLocation(
   sqlText: string,
   position: number,
 ): { readonly line: number; readonly column: number } | undefined {
-  if (
-    !Number.isSafeInteger(position) ||
-    position < 1 ||
-    position > sqlText.length + 1
-  ) {
+  if (!Number.isSafeInteger(position) || position < 1) {
+    return undefined;
+  }
+  const chars = Array.from(sqlText);
+  if (position > chars.length + 1) {
     return undefined;
   }
   let line = 1;
   let column = 1;
   for (let i = 0; i < position - 1; i++) {
-    if (sqlText.charCodeAt(i) === 10) {
+    if (chars[i] === "\n") {
       line++;
       column = 1;
     } else {

@@ -30,12 +30,13 @@ npm install searchgres postgres @ai-sdk/openai
 ```ts
 import { openai } from "@ai-sdk/openai";
 import postgres from "postgres";
-import { createIndex, openIndex } from "searchgres";
+import { createIndex, ensureExtensions, openIndex } from "searchgres";
 
 const sql = postgres(process.env.DATABASE_URL);
 
 try {
-  // Run once. An index is a Postgres schema managed by searchgres.js.
+  // Run once. Install extensions in public and create the index schema.
+  await ensureExtensions(sql);
   await createIndex(sql, "docs_index", { dimensions: 1536 });
 
   const index = await openIndex(sql, "docs_index", {
@@ -182,8 +183,9 @@ models, agent behavior, samples, and metrics also affect end-to-end scores.
   `pg_textsearch` must be included in `shared_preload_libraries`.
 - **Node ≥ 22** or **Bun ≥ 1.4**.
 
-`createIndex()` installs missing extensions when its database role has the
-necessary privileges. The repository includes a PostgreSQL Dockerfile with the
+`ensureExtensions()` installs missing extensions into `public` when its database
+role has the necessary privileges; `createIndex()` verifies they are installed.
+The repository includes a PostgreSQL Dockerfile with the
 extensions configured. See **[Install searchgres.js](https://github.com/timescale/searchgres-js/blob/main/docs/installation.md)**.
 
 ## Reference implementations

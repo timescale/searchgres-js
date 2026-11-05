@@ -885,7 +885,7 @@ test("pins transaction-local search_path during migration and leaves caller sear
   }
 });
 
-test("enforces schema ownership (including inherited owner membership), preserves custom grants across same-signature and signature-changing migrations via proacl, and opens without SELECT on migration", async () => {
+test("enforces strict schema ownership (with SET ROLE support for NOLOGIN owners), preserves custom grants across same-signature and signature-changing migrations via proacl, and opens without SELECT on migration", async () => {
   const ownerRole = randomRole("sgtest_owner");
   const memberRole = randomRole("sgtest_member");
   const readerRole = randomRole("sgtest_reader");
@@ -942,34 +942,35 @@ test("enforces schema ownership (including inherited owner membership), preserve
     );
     assert.equal(await readIndexMarker(outsiderSql, schema), "2");
 
-    await assert.rejects(
-      () => migrateIndex(outsiderSql!, schema),
-      (error: unknown) => {
-        assert.equal(postgresErrorCode(error), "42501");
-        assert.match(
-          (error as Error).message,
-          /only the schema owner can migrate a searchgres index/,
-        );
-        return true;
-      },
-    );
+    // Both outsiderRole and memberRole (without SET ROLE) are rejected by the
+    // strict current_user = nspowner check so adoption never creates a ledger
+    // table owned by the wrong role.
+    for (const nonOwnerSql of [outsiderSql, memberSql]) {
+      await assert.rejects(
+        () => migrateIndex(nonOwnerSql!, schema),
+        (error: unknown) => {
+          assert.equal(postgresErrorCode(error), "42501");
+          assert.match(
+            (error as Error).message,
+            /only the schema owner can migrate a searchgres index/,
+          );
+          return true;
+        },
+      );
+    }
 
-    const migrated = await migrateIndex(ownerSql, schema);
+    // When memberRole assumes ownerRole via SET ROLE, it adopts format 2 -> 3
+    // with the ledger owned by ownerRole, and ownerRole can subsequently run
+    // migrateIndex directly without 42501 on <schema>.migration.
+    await memberSql.unsafe(`set role "${ownerRole}"`);
+    const migrated = await migrateIndex(memberSql, schema);
     assert.deepEqual(migrated, {
       schema,
       fromVersion: "2",
       toVersion: "3",
       applied: [],
     });
-
-    // Both an inherited member of ownerRole and a superuser can also run migrateIndex.
-    assert.deepEqual(await migrateIndex(memberSql, schema), {
-      schema,
-      fromVersion: "3",
-      toVersion: "3",
-      applied: [],
-    });
-    assert.deepEqual(await migrateIndex(sql, schema), {
+    assert.deepEqual(await migrateIndex(ownerSql, schema), {
       schema,
       fromVersion: "3",
       toVersion: "3",

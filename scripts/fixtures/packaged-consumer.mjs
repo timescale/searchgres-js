@@ -5,6 +5,7 @@ import * as library from "searchgres";
 import {
   createIndex,
   dropIndex,
+  ensureExtensions,
   InvalidConfigError,
   migrateIndex,
   noEmbedding,
@@ -40,6 +41,9 @@ try {
     probe.map((row) => [...row]),
     [["back\\slash", "it's SQL", "semi;colon"]],
   );
+
+  const installedExtensions = await ensureExtensions(sql);
+  assert.equal(installedExtensions.length, 3);
 
   for (const vectorType of ["vector", "halfvec"]) {
     const schema = `sgtest_artifact_${randomUUID().replaceAll("-", "")}`;

@@ -1,8 +1,17 @@
 import type postgres from "postgres";
 import semver from "semver";
 import { ExtensionError } from "../errors.ts";
+import { normalizeMigrationOptions } from "../migrate-index.ts";
+import { runOperation } from "../operation.ts";
 import { postgresErrorCode } from "../sql/errors.ts";
 import { runSql } from "../sql/exec.ts";
+import { acquireAdvisoryLock, EXTENSIONS_LOCK_KEY } from "./lock.ts";
+import { ensurePostgresVersion } from "./preflight.ts";
+import {
+  applySessionTimeouts,
+  DEFAULT_MIGRATION_TIMEOUTS,
+  setLockTimeout,
+} from "./session.ts";
 
 export interface ExtensionRequirement {
   readonly name: string;
@@ -11,8 +20,9 @@ export interface ExtensionRequirement {
 
 /**
  * The extensions every index depends on, with the oldest version whose behavior
- * searchgres has verified. `createIndex` installs any that are missing;
- * `openIndex` verifies presence, version, and `public` placement.
+ * searchgres has verified. `ensureExtensions` installs any that are missing;
+ * `createIndex`, `migrateIndex`, and `openIndex` verify presence, version, and
+ * `public` placement without running `CREATE EXTENSION`.
  */
 export const REQUIRED_EXTENSIONS: readonly ExtensionRequirement[] = [
   { name: "vector", minimumVersion: "0.8.0" },
@@ -23,6 +33,50 @@ export const REQUIRED_EXTENSIONS: readonly ExtensionRequirement[] = [
 export interface ExtensionInfo {
   readonly name: string;
   readonly version: string;
+}
+
+/** Runtime budgets for one {@link ensureExtensions} call. */
+export interface EnsureExtensionsOptions {
+  /**
+   * How long to wait for the database-wide extension lock that serializes
+   * concurrent `ensureExtensions` calls before throwing
+   * {@link LockTimeoutError}. `0` waits indefinitely. Default: 30 000 (30 s).
+   */
+  readonly lockTimeoutMs?: number;
+  /**
+   * Wall-clock budget for the extension provisioning transaction before
+   * throwing {@link TransactionTimeoutError}. `0` disables the limit.
+   * Default: 1 200 000 (20 min).
+   */
+  readonly transactionTimeoutMs?: number;
+}
+
+/**
+ * Install or verify the required PostgreSQL extensions (`vector`,
+ * `pg_textsearch`, `ltree`) in `public` under a database-wide advisory lock.
+ */
+export async function ensureExtensions(
+  sql: postgres.Sql,
+  options?: EnsureExtensionsOptions,
+): Promise<readonly ExtensionInfo[]> {
+  return runOperation("searchgres.extensions.ensure", {}, async () => {
+    const budgets = normalizeMigrationOptions(options, "ensureExtensions");
+    return sql.begin(async (tx) => {
+      await applySessionTimeouts(tx, {
+        ...DEFAULT_MIGRATION_TIMEOUTS,
+        lockTimeout: budgets.lockTimeout,
+        transactionTimeout: budgets.transactionTimeout,
+      });
+      await acquireAdvisoryLock(tx, EXTENSIONS_LOCK_KEY);
+      await setLockTimeout(tx, DEFAULT_MIGRATION_TIMEOUTS.lockTimeout);
+      await ensurePostgresVersion(tx);
+      const installed: ExtensionInfo[] = [];
+      for (const requirement of REQUIRED_EXTENSIONS) {
+        installed.push(await ensureExtension(tx, requirement));
+      }
+      return Object.freeze(installed);
+    });
+  });
 }
 
 interface ExtensionStatusRow {

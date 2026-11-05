@@ -4,6 +4,7 @@ import type { Sql } from "postgres";
 import {
   type ExtensionRequirement,
   ensureExtension,
+  ensureExtensions,
 } from "../src/db/extensions.ts";
 import { acquireAdvisoryLock, advisoryLockKey } from "../src/db/lock.ts";
 import {
@@ -56,20 +57,16 @@ test("ensures supplied extensions with an empty search path", async () => {
   }
 });
 
-test("checks one caller-selected extension per transaction", async () => {
-  const extensions = await Promise.all(
-    Array.from({ length: 4 }, () =>
-      sql.begin(async (tx) => {
-        await applySessionTimeouts(tx, DEFAULT_MIGRATION_TIMEOUTS);
-        return ensureExtension(tx, requiredExtensions[2]);
-      }),
-    ),
+test("ensureExtensions serializes concurrent calls under its database-wide lock", async () => {
+  const runs = await Promise.all(
+    Array.from({ length: 4 }, () => ensureExtensions(sql)),
   );
-
-  assert.deepEqual(
-    extensions,
-    Array.from({ length: 4 }, () => extensions[0]),
-  );
+  for (const installed of runs) {
+    assert.deepEqual(
+      installed.map((ext) => ext.name),
+      requiredExtensions.map((ext) => ext.name),
+    );
+  }
 });
 
 test("reports an unavailable caller-selected extension", async () => {
