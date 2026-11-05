@@ -84,6 +84,12 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
   );
   action(
     program
+      .command("migrate")
+      .description("migrate the configured index to the current schema format"),
+    "migrate",
+  );
+  action(
+    program
       .command("destroy")
       .description("drop the configured index")
       .option("--yes", "confirm destruction"),
@@ -366,7 +372,7 @@ function action(command: Command, name: string): void {
     const invoked = actionArgs.at(-1) as Command;
     const flags = flagsFromOptions(invoked.optsWithGlobals());
     if (name === "config") return generateConfig(flags);
-    if (name === "init" || name === "destroy") {
+    if (name === "init" || name === "migrate" || name === "destroy") {
       if (flags.has("ndjson"))
         throw new InputError("--ndjson requires a collection command");
       writeStructuredOutput(await provision(name, flags), outputFormat(flags));

@@ -6,6 +6,7 @@ import {
   createIndex,
   dropIndex,
   InvalidConfigError,
+  migrateIndex,
   noEmbedding,
   normalizeIndexConfig,
   openIndex,
@@ -25,7 +26,7 @@ assert.equal(
   createHash("sha256").update(sqlText).digest("hex"),
   SQL_PROBE_HASH,
 );
-assert.equal(SCHEMA_FORMAT_VERSION, "2");
+assert.equal(SCHEMA_FORMAT_VERSION, "3");
 assert.throws(
   () => normalizeIndexConfig({ dimensions: 0 }),
   (error) => error instanceof InvalidConfigError,
@@ -50,10 +51,23 @@ try {
       assert.equal(index.schema, schema);
       assert.equal(index.dimensions, 4);
       assert.equal(index.vectorType, vectorType);
+      const migrationResult = await migrateIndex(sql, schema);
+      assert.deepEqual(migrationResult, {
+        schema,
+        fromVersion: "3",
+        toVersion: "3",
+        applied: [],
+      });
       const versions = await sql`select version from ${sql(schema)}.version`;
       assert.deepEqual(
         versions.map((row) => row.version),
-        ["2"],
+        ["3"],
+      );
+      const migrations =
+        await sql`select name from ${sql(schema)}.migration order by name`;
+      assert.deepEqual(
+        migrations.map((row) => row.name),
+        ["001_initial"],
       );
 
       const content = "artifact café 雪 back\\slash 'quoted'";

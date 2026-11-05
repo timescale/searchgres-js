@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   BatchTooLargeError,
   ConflictError,
+  compareSchemaVersions,
   DimensionMismatchError,
   EmbeddingUnavailableError,
   ExtensionError,
@@ -10,6 +11,7 @@ import {
   InvalidIndexError,
   InvalidInputError,
   LockTimeoutError,
+  parseSchemaVersion,
   RateLimitError,
   SchemaVersionError,
   SearchgresError,
@@ -35,6 +37,20 @@ test("errors retain the fields callers need to recover", () => {
   const version = new SchemaVersionError("docs", "2", "1");
   assert.equal(version.schemaVersion, "2");
   assert.equal(version.supportedVersion, "1");
+  assert.match(version.message, /newer schema format 2/);
+
+  const migratable = new SchemaVersionError("docs", "2", "3");
+  assert.match(migratable.message, /migrateIndex/);
+
+  const newerTen = new SchemaVersionError("docs", "10", "3");
+  assert.match(newerTen.message, /newer schema format 10/);
+  assert.equal(compareSchemaVersions("10", "3"), 1);
+  assert.equal(compareSchemaVersions("2", "3"), -1);
+  assert.equal(compareSchemaVersions("3", "3"), 0);
+  for (const invalidVersion of ["", "0", "-1", "03", "2.0", "abc", "3 "]) {
+    assert.equal(parseSchemaVersion(invalidVersion), null);
+    assert.equal(compareSchemaVersions(invalidVersion, "3"), null);
+  }
 
   const dimensions = new DimensionMismatchError(1536, 768);
   assert.equal(dimensions.expected, 1536);

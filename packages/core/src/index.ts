@@ -26,6 +26,11 @@ export type {
 } from "./embedding-worker.ts";
 export * from "./errors.ts";
 export * from "./identifiers.ts";
+export {
+  type MigrateIndexOptions,
+  type MigrateIndexResult,
+  migrateIndex,
+} from "./migrate-index.ts";
 export * from "./open-index.ts";
 export type { PatchInput, StoredRecord } from "./records.ts";
 export type {

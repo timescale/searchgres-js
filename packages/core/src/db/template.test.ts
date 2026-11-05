@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { InvalidConfigError } from "../errors.ts";
 import {
   indexSqlContext,
+  migrationSqlContext,
   renderSql,
   sqlIdentifier,
   sqlLiteral,
@@ -118,4 +119,28 @@ test("provisioning context validates the schema, shape and catalog literal", () 
   ]) {
     assert.throws(() => indexSqlContext("docs", { dimensions: 4 }, literal));
   }
+
+  const migration = migrationSqlContext("docs", {
+    vectorType: "vector",
+    dimensions: 8,
+  });
+  assert.equal(
+    renderSql(
+      "{{schema_ident}} public.{{vector_type_ident}}({{dimensions_int}}) public.{{cosine_opclass_ident}} {{bm25_index_literal}}",
+      migration.variables,
+    ),
+    '"docs" public."vector"(8) public."vector_cosine_ops" \'docs.record_content_bm25_idx\'',
+  );
+  for (const creationOnly of [
+    "{{text_config_literal}}",
+    "{{bm25_k1_number}}",
+    "{{bm25_b_number}}",
+    "{{hnsw_m_int}}",
+    "{{hnsw_ef_construction_int}}",
+  ]) {
+    assert.throws(() => renderSql(creationOnly, migration.variables));
+  }
+  assert.throws(() =>
+    migrationSqlContext("docs", { vectorType: "vector", dimensions: 2001 }),
+  );
 });

@@ -1,29 +1,26 @@
 import type postgres from "postgres";
-import { z } from "zod";
 import { type IndexConfig, normalizeIndexConfig } from "./config.ts";
-import {
-  executeDefinitions,
-  indexDefinitions,
-  schemaDefinitions,
-} from "./db/definitions.ts";
+import { bootstrapMigrations, executeMigrations } from "./db/definitions.ts";
 import { ensureExtension, REQUIRED_EXTENSIONS } from "./db/extensions.ts";
-import { acquireAdvisoryLock, CREATE_INDEX_LOCK_KEY } from "./db/lock.ts";
+import { acquireAdvisoryLock, advisoryLockKey } from "./db/lock.ts";
 import { ensurePostgresVersion } from "./db/preflight.ts";
 import {
   applySessionTimeouts,
-  DEFAULT_MIGRATION_LOCK_TIMEOUT,
   DEFAULT_MIGRATION_TIMEOUTS,
   setLockTimeout,
 } from "./db/session.ts";
 import { indexSqlContext } from "./db/template.ts";
 import { ConflictError, InvalidConfigError } from "./errors.ts";
 import { assertSchemaName } from "./identifiers.ts";
+import {
+  normalizeMigrationOptions,
+  runIndexMigrations,
+} from "./migrate-index.ts";
 import { runOperation } from "./operation.ts";
 import { postgresErrorCode } from "./sql/errors.ts";
 import { runSql } from "./sql/exec.ts";
-import { toValidationIssue } from "./validation.ts";
 
-export const SCHEMA_FORMAT_VERSION = "2";
+export const SCHEMA_FORMAT_VERSION = "3";
 
 /**
  * Runtime budgets for one `createIndex` call. These shape how long the call
@@ -31,9 +28,9 @@ export const SCHEMA_FORMAT_VERSION = "2";
  */
 export interface CreateIndexOptions {
   /**
-   * How long to wait for the database-wide provisioning lock that serializes
-   * concurrent `createIndex` calls (and the extension installs they may
-   * perform) before throwing {@link LockTimeoutError}. `0` waits indefinitely.
+   * How long to wait for the per-schema lock that serializes concurrent
+   * `createIndex` and `migrateIndex` calls targeting this schema before
+   * throwing {@link LockTimeoutError}. `0` waits indefinitely.
    * Default: 30 000 (30 s).
    */
   readonly lockTimeoutMs?: number;
@@ -45,43 +42,10 @@ export interface CreateIndexOptions {
   readonly transactionTimeoutMs?: number;
 }
 
-const createIndexOptionsSchema = z.strictObject({
-  lockTimeoutMs: z.int().nonnegative().optional(),
-  transactionTimeoutMs: z.int().nonnegative().optional(),
-});
-
-function normalizeCreateIndexOptions(input: unknown): {
-  readonly lockTimeout: string;
-  readonly transactionTimeout: string;
-} {
-  const result = createIndexOptionsSchema.safeParse(input ?? {});
-  if (!result.success) {
-    const issues = result.error.issues.map(toValidationIssue);
-    const first = issues[0];
-    const detail = first
-      ? `${first.path.join(".") || "options"}: ${first.message}`
-      : "validation failed";
-    throw new InvalidConfigError(`Invalid createIndex options: ${detail}`, {
-      cause: result.error,
-      issues,
-    });
-  }
-  const { lockTimeoutMs, transactionTimeoutMs } = result.data;
-  return {
-    lockTimeout:
-      lockTimeoutMs === undefined
-        ? DEFAULT_MIGRATION_LOCK_TIMEOUT
-        : `${lockTimeoutMs}ms`,
-    transactionTimeout:
-      transactionTimeoutMs === undefined
-        ? DEFAULT_MIGRATION_TIMEOUTS.transactionTimeout
-        : `${transactionTimeoutMs}ms`,
-  };
-}
-
 /**
- * Create a new immutable index schema. Rebuilding into a new schema is the
- * upgrade path; this operation never mutates or migrates an existing schema.
+ * Create a new index schema at the current schema format version (`3`).
+ * Existing schemas are rejected; use {@link migrateIndex} to upgrade an
+ * existing index in place.
  */
 export async function createIndex(
   sql: postgres.Sql,
@@ -92,7 +56,7 @@ export async function createIndex(
   return runOperation("searchgres.index.create", { schema }, async (span) => {
     const indexSchema = assertSchemaName(schema);
     const creation = normalizeIndexConfig(config);
-    const budgets = normalizeCreateIndexOptions(options);
+    const budgets = normalizeMigrationOptions(options, "createIndex");
     span.setAttributes({
       "searchgres.index.vector_type": creation.vectorType,
       "searchgres.index.dimensions": creation.dimensions,
@@ -106,7 +70,7 @@ async function createIndexSchema(
   sql: postgres.Sql,
   indexSchema: string,
   creation: ReturnType<typeof normalizeIndexConfig>,
-  budgets: ReturnType<typeof normalizeCreateIndexOptions>,
+  budgets: ReturnType<typeof normalizeMigrationOptions>,
 ): Promise<void> {
   await sql.begin(async (tx) => {
     await applySessionTimeouts(tx, {
@@ -114,7 +78,7 @@ async function createIndexSchema(
       lockTimeout: budgets.lockTimeout,
       transactionTimeout: budgets.transactionTimeout,
     });
-    await acquireAdvisoryLock(tx, CREATE_INDEX_LOCK_KEY);
+    await acquireAdvisoryLock(tx, advisoryLockKey(indexSchema));
     await setLockTimeout(tx, DEFAULT_MIGRATION_TIMEOUTS.lockTimeout);
     await ensurePostgresVersion(tx);
 
@@ -175,28 +139,18 @@ async function createIndexSchema(
     }
 
     const context = indexSqlContext(indexSchema, creation, textConfig.literal);
-    await executeDefinitions(tx, context, schemaDefinitions);
     // Transaction-local only; retain the original provisioning resolution context.
     await runSql(tx`set local search_path to pg_catalog, public, pg_temp`, {
       spanName: "setLocalSearchPath",
       dbOperationName: "SET",
       namespace: indexSchema,
     });
-    await executeDefinitions(tx, context, indexDefinitions);
-
-    // ------------------------------------------------------------------------
-    // record the schema format marker
-    // ------------------------------------------------------------------------
-    await runSql(
-      tx`
-        insert into ${tx(indexSchema)}.version (version)
-        values (${SCHEMA_FORMAT_VERSION})
-      `,
-      {
-        spanName: "recordSchemaVersion",
-        dbOperationName: "INSERT",
-        namespace: indexSchema,
-      },
+    await executeMigrations(
+      tx,
+      context,
+      bootstrapMigrations,
+      SCHEMA_FORMAT_VERSION,
     );
+    await runIndexMigrations(tx, context, "fresh");
   });
 }

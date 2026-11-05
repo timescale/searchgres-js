@@ -6,7 +6,7 @@ import {
   createIndex,
   SCHEMA_FORMAT_VERSION,
 } from "../src/create-index.ts";
-import { acquireAdvisoryLock, CREATE_INDEX_LOCK_KEY } from "../src/db/lock.ts";
+import { acquireAdvisoryLock, advisoryLockKey } from "../src/db/lock.ts";
 import { INDEX_SCHEMA_COMMENT } from "../src/db/marker.ts";
 import { noEmbedding } from "../src/embedding.ts";
 import {
@@ -64,8 +64,9 @@ test("creates an immutable index schema and singleton format marker", async () =
     assert.equal(versions.length, 1);
     assert.equal(versions[0]?.version, SCHEMA_FORMAT_VERSION);
     assert.ok(versions[0]?.at instanceof Date);
+    assert.equal(await columnType(sql, schema, "version", "version"), "bigint");
     await expectSqlState(
-      () => sql`insert into ${version} (version) values ('another')`,
+      () => sql`insert into ${version} (version) values (99)`,
       "23505",
     );
   } finally {
@@ -173,8 +174,10 @@ test("createIndex validates its options and honors the lock budget", async () =>
   }
   assert.equal(await schemaExists(sql, schema), false);
 
-  // Hold the provisioning lock from another transaction: createIndex must
-  // give up within its lock budget and leave nothing behind.
+  // Hold the per-schema lock from another transaction: createIndex for the
+  // same schema must time out and leave nothing behind, while a different
+  // schema can be created concurrently without waiting.
+  const otherSchema = randomTestSchema();
   let locked!: () => void;
   let release!: () => void;
   const lockHeld = new Promise<void>((resolve) => {
@@ -184,7 +187,7 @@ test("createIndex validates its options and honors the lock budget", async () =>
     release = resolve;
   });
   const holder = sql.begin(async (tx) => {
-    await acquireAdvisoryLock(tx, CREATE_INDEX_LOCK_KEY);
+    await acquireAdvisoryLock(tx, advisoryLockKey(schema));
     locked();
     await releaseHolder;
   });
@@ -195,9 +198,17 @@ test("createIndex validates its options and honors the lock budget", async () =>
       LockTimeoutError,
     );
     assert.equal(await schemaExists(sql, schema), false);
+    await createIndex(
+      sql,
+      otherSchema,
+      { dimensions: 4 },
+      { lockTimeoutMs: 50 },
+    );
+    assert.equal(await schemaExists(sql, otherSchema), true);
   } finally {
     release();
     await holder;
+    await dropTestSchema(sql, otherSchema);
   }
 
   // With the lock free, an explicit budget provisions normally.

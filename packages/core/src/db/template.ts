@@ -70,6 +70,11 @@ export interface IndexSqlContext {
   readonly variables: TemplateVariables;
 }
 
+export interface StoredIndexShape {
+  readonly vectorType: "vector" | "halfvec";
+  readonly dimensions: number;
+}
+
 /** One closed context for provisioning. Record data never enters templates. */
 export function indexSqlContext(
   schema: string,
@@ -93,6 +98,40 @@ export function indexSqlContext(
       bm25_b_number: sqlNumber(normalized.bm25.b),
       hnsw_m_int: sqlNumber(normalized.hnsw.m, true),
       hnsw_ef_construction_int: sqlNumber(normalized.hnsw.efConstruction, true),
+      bm25_index_literal: sqlLiteral(`${name}.record_content_bm25_idx`),
+    }),
+  });
+}
+
+/**
+ * Context for migrating an existing index using its stored vector shape.
+ * Omits creation-only BM25/HNSW parameters so migrations and repeatable SQL
+ * cannot silently fall back to creation defaults.
+ */
+export function migrationSqlContext(
+  schema: string,
+  shape: StoredIndexShape,
+): IndexSqlContext {
+  const name = assertSchemaName(schema);
+  if (shape.vectorType !== "vector" && shape.vectorType !== "halfvec") {
+    throw new Error(`Invalid vector type: ${String(shape.vectorType)}`);
+  }
+  const maxDimensions = shape.vectorType === "vector" ? 2000 : 4000;
+  if (
+    !Number.isSafeInteger(shape.dimensions) ||
+    shape.dimensions < 1 ||
+    shape.dimensions > maxDimensions
+  ) {
+    throw new Error(`Invalid vector dimensions: ${String(shape.dimensions)}`);
+  }
+  return Object.freeze({
+    schema: name,
+    variables: Object.freeze({
+      schema_ident: sqlIdentifier(name),
+      schema_comment_literal: sqlLiteral(INDEX_SCHEMA_COMMENT),
+      vector_type_ident: sqlIdentifier(shape.vectorType),
+      dimensions_int: sqlNumber(shape.dimensions, true),
+      cosine_opclass_ident: sqlIdentifier(`${shape.vectorType}_cosine_ops`),
       bm25_index_literal: sqlLiteral(`${name}.record_content_bm25_idx`),
     }),
   });

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `migrateIndex(sql, schema, options?)` and `searchgres migrate` for
+  explicit in-place upgrades from schema format `2` to `3` using a per-index
+  `<schema>.migration` ledger and repeatable `CREATE OR REPLACE` routine and
+  trigger definitions.
+
+### Changed
+
+- Author persisted index DDL, triggers, and schema-local routines in embedded
+  `.sql` files under `packages/core/src/db/sql/`, and advance
+  `SCHEMA_FORMAT_VERSION` to `"3"`.
+
 ## [0.3.2] - 2026-09-18
 
 ### Changed

@@ -15,7 +15,11 @@ import {
   retryEmbeddingFailures,
 } from "./db/embedding-queue.ts";
 import { getExtensionInfo, REQUIRED_EXTENSIONS } from "./db/extensions.ts";
-import { readIndexMarker } from "./db/marker.ts";
+import {
+  readIndexMarker,
+  readIndexShape,
+  readMigrationLedgerState,
+} from "./db/marker.ts";
 import { dropIndexSchema } from "./drop-index.ts";
 import {
   type EmbeddingWorker,
@@ -42,7 +46,6 @@ import {
   type StoredRecord,
 } from "./records.ts";
 import { type SearchOptions, type SearchResult, search } from "./search.ts";
-import { runSql } from "./sql/exec.ts";
 import {
   copyTree,
   countTree,
@@ -599,18 +602,6 @@ function runTreeOperation(
   });
 }
 
-interface EmbeddingColumnRow {
-  readonly type_name: string;
-  readonly type_schema: string;
-  readonly display_type: string;
-}
-
-interface HnswOpclassRow {
-  readonly opcname: string;
-  readonly opclass_schema: string;
-  readonly amname: string;
-}
-
 /**
  * Shape check only. A string model id is resolved by the AI SDK's provider
  * registry at embed time, and an object model is anything with `doEmbed` (the
@@ -657,7 +648,7 @@ function normalizeOpenIndexOptions(input: unknown): OpenIndexOptions {
   return result.data as OpenIndexOptions;
 }
 
-/** Open and validate an immutable searchgres index without running DDL. */
+/** Open and validate a searchgres index without running DDL. */
 export async function openIndex(
   sql: postgres.Sql,
   schema: string,
@@ -684,6 +675,12 @@ async function openIndexHandle(
   if (version !== SCHEMA_FORMAT_VERSION) {
     throw new SchemaVersionError(indexSchema, version, SCHEMA_FORMAT_VERSION);
   }
+  const ledger = await readMigrationLedgerState(sql, indexSchema);
+  if (!ledger.validTable) {
+    throw new InvalidIndexError(indexSchema, {
+      detail: `missing or invalid migration table for schema format ${version}`,
+    });
+  }
 
   // searchgres is public-only: every required extension must be installed in
   // `public`, and the index objects must resolve to it.
@@ -691,19 +688,7 @@ async function openIndexHandle(
     await getExtensionInfo(sql, requirement);
   }
 
-  const embedding = await readEmbeddingColumn(sql, indexSchema);
-  if (embedding.type_schema !== "public") {
-    throw new InvalidIndexError(indexSchema);
-  }
-  const vectorShape = parseVectorShape(embedding, indexSchema);
-  const hnswOpclass = await readHnswOpclass(sql, indexSchema);
-  if (
-    hnswOpclass.amname !== "hnsw" ||
-    hnswOpclass.opclass_schema !== "public" ||
-    hnswOpclass.opcname !== `${vectorShape.vectorType}_cosine_ops`
-  ) {
-    throw new InvalidIndexError(indexSchema);
-  }
+  const vectorShape = await readIndexShape(sql, indexSchema);
 
   return new Index({
     sql,
@@ -713,84 +698,4 @@ async function openIndexHandle(
     embedding: opts.embedding,
     truncate: opts.truncate ?? noTruncation,
   });
-}
-
-async function readEmbeddingColumn(
-  sql: postgres.ISql,
-  schema: string,
-): Promise<EmbeddingColumnRow> {
-  const [row] = await runSql(
-    sql<EmbeddingColumnRow[]>`
-      select
-        t.typname as type_name
-      , tn.nspname as type_schema
-      , pg_catalog.format_type(a.atttypid, a.atttypmod) as display_type
-      from pg_catalog.pg_attribute a
-      inner join pg_catalog.pg_class c on (c.oid = a.attrelid)
-      inner join pg_catalog.pg_namespace n on (n.oid = c.relnamespace)
-      inner join pg_catalog.pg_type t on (t.oid = a.atttypid)
-      inner join pg_catalog.pg_namespace tn on (tn.oid = t.typnamespace)
-      where n.nspname = ${schema}
-      and c.relname = 'record'
-      and a.attname = 'embedding'
-      and not a.attisdropped
-    `,
-    {
-      spanName: "readEmbeddingColumn",
-      dbOperationName: "SELECT",
-      namespace: schema,
-    },
-  );
-  if (!row) {
-    throw new InvalidIndexError(schema);
-  }
-  return row;
-}
-
-function parseVectorShape(
-  column: EmbeddingColumnRow,
-  schema: string,
-): { readonly vectorType: "vector" | "halfvec"; readonly dimensions: number } {
-  if (column.type_name !== "vector" && column.type_name !== "halfvec") {
-    throw new InvalidIndexError(schema);
-  }
-  const dimensions = /\((\d+)\)$/.exec(column.display_type)?.[1];
-  if (!dimensions) {
-    throw new InvalidIndexError(schema);
-  }
-  return {
-    vectorType: column.type_name,
-    dimensions: Number(dimensions),
-  };
-}
-
-async function readHnswOpclass(
-  sql: postgres.ISql,
-  schema: string,
-): Promise<HnswOpclassRow> {
-  const [row] = await runSql(
-    sql<HnswOpclassRow[]>`
-      select
-        opc.opcname
-      , opn.nspname as opclass_schema
-      , am.amname
-      from pg_catalog.pg_index i
-      inner join pg_catalog.pg_class c on (c.oid = i.indexrelid)
-      inner join pg_catalog.pg_namespace n on (n.oid = c.relnamespace)
-      inner join pg_catalog.pg_opclass opc on (opc.oid = i.indclass[0])
-      inner join pg_catalog.pg_namespace opn on (opn.oid = opc.opcnamespace)
-      inner join pg_catalog.pg_am am on (am.oid = opc.opcmethod)
-      where n.nspname = ${schema}
-      and c.relname = 'record_embedding_hnsw_idx'
-    `,
-    {
-      spanName: "readHnswOpclass",
-      dbOperationName: "SELECT",
-      namespace: schema,
-    },
-  );
-  if (!row) {
-    throw new InvalidIndexError(schema);
-  }
-  return row;
 }

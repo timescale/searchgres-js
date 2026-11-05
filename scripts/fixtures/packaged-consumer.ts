@@ -4,6 +4,9 @@ import {
   type Filter,
   Index,
   type IndexConfig,
+  type MigrateIndexOptions,
+  type MigrateIndexResult,
+  migrateIndex,
   noEmbedding,
   normalizeIndexConfig,
   noTruncation,
@@ -22,7 +25,14 @@ export async function consumerTypes(sql: postgres.Sql, schema: string) {
   const normalized = normalizeIndexConfig(config);
   const dimensions: number = normalized.dimensions;
   const textConfig: string = normalized.bm25.textConfig;
+  const migrateOptions: MigrateIndexOptions = { lockTimeoutMs: 5_000 };
   await createIndex(sql, schema, config);
+  const migrated: MigrateIndexResult = await migrateIndex(
+    sql,
+    schema,
+    migrateOptions,
+  );
+  const fromVersion: string = migrated.fromVersion;
   const index = await openIndex(sql, schema, { embedding: noEmbedding });
   const handle: Index = index;
   const record = {
@@ -73,6 +83,7 @@ export async function consumerTypes(sql: postgres.Sql, schema: string) {
   const invalidScore: string = results[0]?.score;
 
   return {
+    fromVersion,
     handle,
     dimensions,
     textConfig,

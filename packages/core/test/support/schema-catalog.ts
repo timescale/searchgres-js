@@ -92,7 +92,7 @@ export async function schemaCatalog(
     `;
     assert.equal(namespace.length, 1);
     const versions = await tx`
-      select version from ${tx(schema)}.version order by version collate "C"
+      select version from ${tx(schema)}.version order by version
     `;
     const relations = await tx`
       select c.relname as name, c.relkind as kind, c.relpersistence as persistence,
