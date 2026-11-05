@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Sql } from "postgres";
 import { createIndex } from "../src/create-index.ts";
+import { ensureExtensions } from "../src/db/extensions.ts";
+import { ExtensionError } from "../src/errors.ts";
 import { openIndex } from "../src/open-index.ts";
 import {
   connect,
@@ -36,6 +38,18 @@ test("batch writes work when createIndex installs extension array types on the s
     `;
     assert.deepEqual(Array.from(installed), []);
 
+    // createIndex does not install extensions itself; it requires them to be
+    // installed first via ensureExtensions (or administrative setup).
+    await assert.rejects(
+      () => createIndex(indexSql!, "docs", { dimensions: 4 }),
+      (error: unknown) => {
+        assert.ok(error instanceof ExtensionError);
+        assert.equal(error.reason, "missing");
+        return true;
+      },
+    );
+
+    await ensureExtensions(indexSql);
     await createIndex(indexSql, "docs", { dimensions: 4 });
     const index = await openIndex(indexSql, "docs", {
       embedding: "mock-embedding",

@@ -1,6 +1,9 @@
 import type postgres from "postgres";
 import {
   createIndex,
+  type EnsureExtensionsOptions,
+  type ExtensionInfo,
+  ensureExtensions,
   type Filter,
   Index,
   type IndexConfig,
@@ -25,6 +28,11 @@ export async function consumerTypes(sql: postgres.Sql, schema: string) {
   const normalized = normalizeIndexConfig(config);
   const dimensions: number = normalized.dimensions;
   const textConfig: string = normalized.bm25.textConfig;
+  const extensionOptions: EnsureExtensionsOptions = { lockTimeoutMs: 5_000 };
+  const extensions: readonly ExtensionInfo[] = await ensureExtensions(
+    sql,
+    extensionOptions,
+  );
   const migrateOptions: MigrateIndexOptions = { lockTimeoutMs: 5_000 };
   await createIndex(sql, schema, config);
   const migrated: MigrateIndexResult = await migrateIndex(
@@ -83,6 +91,7 @@ export async function consumerTypes(sql: postgres.Sql, schema: string) {
   const invalidScore: string = results[0]?.score;
 
   return {
+    extensions,
     fromVersion,
     handle,
     dimensions,

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `ensureExtensions(sql, options?)` to install required PostgreSQL
+  extensions in `public` under a database-wide lock, and decouple extension
+  installation from `createIndex` so index provisioning uses a per-schema lock.
 - Add `migrateIndex(sql, schema, options?)` and `searchgres migrate` for
   explicit in-place upgrades from schema format `2` to `3` using a per-index
   `<schema>.migration` ledger and repeatable `CREATE OR REPLACE` routine and

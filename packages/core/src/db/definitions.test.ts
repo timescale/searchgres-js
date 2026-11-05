@@ -122,11 +122,16 @@ test("every SQL file in sql/ has one manifest entry and renders cleanly", async 
   }
 });
 
-test("sqlLocation maps 1-based PostgreSQL character positions to line and column", () => {
+test("sqlLocation maps 1-based PostgreSQL Unicode character positions to line and column", () => {
   const sample = "select 1;\ncreate table broken (\n  bad no_such_type\n);";
   assert.deepEqual(sqlLocation(sample, 1), { line: 1, column: 1 });
   assert.deepEqual(sqlLocation(sample, 11), { line: 2, column: 1 });
   assert.deepEqual(sqlLocation(sample, 39), { line: 3, column: 7 });
+  assert.deepEqual(sqlLocation("select '😀';\nselect broken;", 13), {
+    line: 2,
+    column: 1,
+  });
+  assert.equal(sqlLocation("select '😀';", 13), undefined);
   assert.equal(sqlLocation(sample, 0), undefined);
   assert.equal(sqlLocation(sample, sample.length + 2), undefined);
   assert.equal(sqlLocation(sample, Number.NaN), undefined);

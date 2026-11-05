@@ -45,11 +45,13 @@ Sensible defaults are applied; override them only if you have a reason.
 
 ## Create an index
 
-Only `dimensions` is required:
+Ensure the required PostgreSQL extensions (`vector`, `pg_textsearch`, `ltree`)
+are installed in `public`, then create the index. Only `dimensions` is required:
 
 ```ts
-import { createIndex } from "searchgres";
+import { createIndex, ensureExtensions } from "searchgres";
 
+await ensureExtensions(sql);
 await createIndex(sql, "docs_index", { dimensions: 1536 });
 ```
 
@@ -69,10 +71,10 @@ The schema name must be a lowercase PostgreSQL identifier
 exists throws a [`ConflictError`](../reference/errors.md).
 
 `createIndex()` is atomic: it either creates the whole index or rolls back
-completely. Concurrent calls (in any schema, on the same database) serialize on
-one advisory lock because they may install extensions; a call waits up to 30 s
-for it by default and the whole transaction is bounded at 20 min. Both budgets
-are adjustable through the optional fourth argument:
+completely. It verifies that the required extensions exist in `public` without
+running `CREATE EXTENSION`, and serializes on a per-schema advisory lock so
+creating different schemas concurrently does not block. A call waits up to 30 s
+for the per-schema lock by default and bounds the transaction at 20 min:
 
 ```ts
 await createIndex(sql, "docs_index", { dimensions: 1536 }, {
@@ -157,7 +159,9 @@ Pause readers, writers, workers, and administrative DDL (`createIndex`,
 `dropIndex`, `init`, `destroy`) against the index while migrating, then reopen
 handles afterward.
 
-The calling database role must own the index schema. Migration is one-way and
+The calling database role must be the index schema owner (`current_user =
+nspowner`; use `SET ROLE` when the owner is a `NOLOGIN` role). Migration is
+one-way and
 preserves existing records, embeddings, queue rows, and BM25/HNSW settings,
 returning `{ schema, fromVersion, toVersion, applied }`. Older `0.3.x` clients
 cannot open a format-`3` index; upgrade the client package. If the database

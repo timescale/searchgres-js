@@ -7,6 +7,7 @@ Import everything from the package root:
 
 ```ts
 import {
+  ensureExtensions,
   createIndex,
   migrateIndex,
   openIndex,
@@ -21,12 +22,23 @@ import {
 
 ## Factory functions
 
+### `ensureExtensions(sql, options?) → Promise<readonly ExtensionInfo[]>`
+
+Installs or verifies the required PostgreSQL extensions (`vector`,
+`pg_textsearch`, `ltree`) in `public` under a database-wide advisory lock.
+Accepts `lockTimeoutMs` and `transactionTimeoutMs`.
+
+```ts
+await ensureExtensions(sql);
+```
+
 ### `createIndex(sql, schema, config, options?)`
 
-Creates a new index schema. Atomic; throws
-[`ConflictError`](errors.md) if the schema already exists and
-[`InvalidConfigError`](errors.md) for a bad config, schema name, or option. See
-[Create and manage indexes](../guides/indexes.md).
+Creates a new index schema after verifying that the required extensions exist in
+`public`. Atomic; throws [`ConflictError`](errors.md) if the schema already
+exists, [`ExtensionError`](errors.md) if a required extension is missing or not
+in `public`, and [`InvalidConfigError`](errors.md) for a bad config, schema
+name, or option. See [Create and manage indexes](../guides/indexes.md).
 
 ```ts
 await createIndex(sql, "docs_index", {
@@ -63,9 +75,10 @@ table/index creation) and `3` (applying any unapplied incremental steps and
 refreshing repeatable functions and triggers). Rejects format `1` and newer
 formats with [`SchemaVersionError`](errors.md), and rejects missing or
 unexpected migration ledger tables with [`InvalidIndexError`](errors.md).
-Requires the calling database role to own the index schema (checked via
-`pg_has_role(current_user, nspowner, 'USAGE')`, raising PostgreSQL
-`insufficient_privilege` `42501` otherwise). Needs no embedding model.
+Requires the calling database role to be the index schema owner
+(`n.nspowner = pg_catalog.to_regrole(current_user)::oid`, raising PostgreSQL
+`insufficient_privilege` `42501` otherwise; use `SET ROLE` if the owner is a
+`NOLOGIN` role). Needs no embedding model.
 
 ```ts
 const result = await migrateIndex(sql, "docs_index", {

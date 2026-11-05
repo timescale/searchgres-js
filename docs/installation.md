@@ -46,20 +46,17 @@ Two requirements are worth calling out up front:
   shared_preload_libraries = 'pg_textsearch'
   ```
 
-- **The extensions must live in `public`.** `createIndex()` installs a missing
-  extension into `public`; if one already exists in another schema it throws an
-  [`ExtensionError`](reference/errors.md) rather than moving it.
+- **The extensions must live in `public`.** `ensureExtensions()` installs any
+  missing required extension into `public` under a database-wide advisory lock.
+  `createIndex()`, `migrateIndex()`, and `openIndex()` verify that all three are
+  installed in `public`, throwing [`ExtensionError`](reference/errors.md) if one
+  is missing or lives in another schema.
 
 ### Privileges
 
-The role used with `createIndex()` needs to:
-
-- run `CREATE EXTENSION` the first time an extension is missing;
-- create schemas and objects.
-
-If extension creation is restricted, install all three in `public` with a
-privileged role first. The application role then only needs the privileges
-required to create and use its index schema.
+Call `ensureExtensions(sql)` (or run `CREATE EXTENSION` directly) with a role
+allowed to install extensions in `public`. Once the extensions exist, the role
+used with `createIndex()` only needs permission to create schemas and objects.
 
 ## Production PostgreSQL with Tiger Cloud
 
@@ -75,9 +72,9 @@ application's `DATABASE_URL`, and use it with `postgres.js` normally:
 const sql = postgres(process.env.DATABASE_URL, { ssl: "require" });
 ```
 
-Then call `createIndex()` with a role allowed to install the available
-extensions and create schemas, or pre-install the extensions in `public` with an
-administrative role before provisioning the index. Your application continues
+Then call `ensureExtensions(sql)` and `createIndex()` (or pre-install the
+extensions in `public` with an administrative role before calling
+`createIndex()`). Your application continues
 to own its pool, index names, embedding provider, and worker deployment.
 
 For production concerns beyond database provisioning, see

@@ -4,6 +4,7 @@ import * as clack from "@clack/prompts";
 import {
   createIndex,
   dropIndex,
+  ensureExtensions,
   migrateIndex,
   noEmbedding,
   openIndex,
@@ -47,6 +48,7 @@ export async function provision(
       }
     }
     try {
+      await ensureExtensions(sql);
       await createIndex(sql, config.index.schema, {
         dimensions: config.index.dimensions,
         vectorType: config.index.vectorType,

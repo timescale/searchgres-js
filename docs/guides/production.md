@@ -99,7 +99,7 @@ Operation spans use the `searchgres` instrumentation scope and stable names:
 
 | Area | Span names |
 | --- | --- |
-| Index | `searchgres.index.create`, `searchgres.index.migrate`, `searchgres.index.open`, `searchgres.index.drop` |
+| Index | `searchgres.extensions.ensure`, `searchgres.index.create`, `searchgres.index.migrate`, `searchgres.index.open`, `searchgres.index.drop` |
 | Records | `searchgres.record.upsert`, `searchgres.record.upsert_many`, `searchgres.record.insert`, `searchgres.record.insert_many`, `searchgres.record.get`, `searchgres.record.get_by_name`, `searchgres.record.patch`, `searchgres.record.delete`, `searchgres.record.delete_by_name` |
 | Search | `searchgres.search` |
 | Tree | `searchgres.tree.move`, `searchgres.tree.copy`, `searchgres.tree.delete`, `searchgres.tree.count`, `searchgres.tree.list`, `searchgres.tree.view` |
