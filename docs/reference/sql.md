@@ -136,9 +136,9 @@ Embedding generation runs outside PostgreSQL, coordinated by schema-local queue
 routines (`idempotent/005_embedding_queue.sql`):
 
 ```sql
--- claim up to 10 rows with a 300,000 ms lease and 3 max attempts
+-- claim up to 10 rows with a 5-minute lease and 3 max attempts
 select queue_id, record_id, content_version, content, claimed
-from docs_index.claim_embedding_batch(10, 300000, 3);
+from docs_index.claim_embedding_batch(10, interval '5 minutes', 3);
 
 -- version-fenced write-back after generating the vector outside the transaction
 select docs_index.complete_embedding(
@@ -150,14 +150,14 @@ select docs_index.complete_embedding(
 
 -- record a transient provider error or release a claim after a 429 rate limit
 select docs_index.fail_embedding(1, 'provider timeout');
-select docs_index.release_embedding(1, 5000);
+select docs_index.release_embedding(1, interval '5 seconds');
 
 -- inspect, retry failures, and prune terminal rows
 select * from docs_index.embedding_queue_stats();
 select docs_index.pending_embedding_count();
 select * from docs_index.list_embedding_failures(100, null);
 select docs_index.retry_embedding_failures(array[1]::bigint[]);
-select docs_index.prune_embedding_queue(604800000);
+select docs_index.prune_embedding_queue(interval '7 days');
 ```
 
 The library's `processEmbeddings()` and `startEmbeddingWorker()` orchestrate

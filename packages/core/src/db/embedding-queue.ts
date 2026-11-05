@@ -139,7 +139,7 @@ export async function claimBatch(
       , claimed
       from ${sql(schema)}.claim_embedding_batch
       ( ${options.batchSize}
-      , ${options.leaseMs}
+      , (${options.leaseMs} * interval '1 millisecond')
       , ${options.maxAttempts}
       )
     `,
@@ -238,7 +238,7 @@ export async function releaseEmbedding(
     sql`
       select ${sql(schema)}.release_embedding
       ( ${input.queueId}::pg_catalog.int8
-      , ${input.backoffMs}
+      , (${input.backoffMs} * interval '1 millisecond')
       )
     `,
     {
@@ -271,7 +271,7 @@ export async function pruneQueue(
   }
   const [row] = await runSql(
     sql<{ pruned: string }[]>`
-      select ${sql(schema)}.prune_embedding_queue(${retentionMs})::text as pruned
+      select ${sql(schema)}.prune_embedding_queue(${retentionMs} * interval '1 millisecond')::text as pruned
     `,
     {
       spanName: "pruneEmbeddingQueue",
