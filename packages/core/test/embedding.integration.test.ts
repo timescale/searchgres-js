@@ -701,7 +701,7 @@ test("embedding queue routines are callable directly from SQL", async () => {
       }[]
     >`
       select queue_id::text, record_id, content_version, content, claimed
-      from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 1)
+      from ${sql(index.schema)}.claim_embedding_batch(10, interval '5 minutes', 1)
     `;
     assert.equal(claimed.length, 1);
     const first = claimed[0];
@@ -716,7 +716,7 @@ test("embedding queue routines are callable directly from SQL", async () => {
       update ${sql(index.schema)}.embedding_queue set visible_at = now() where id = ${first.queue_id}::bigint
     `;
     // Next claim with max_attempts = 1 sweeps the exhausted row to 'failed'.
-    await sql`select * from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 1)`;
+    await sql`select * from ${sql(index.schema)}.claim_embedding_batch(10, interval '5 minutes', 1)`;
 
     const failures = await sql<{ queue_id: string; last_error: string }[]>`
       select queue_id::text, last_error
@@ -739,15 +739,27 @@ test("embedding queue routines are callable directly from SQL", async () => {
       { queue_id: string; record_id: string; content_version: number }[]
     >`
       select queue_id::text, record_id, content_version
-      from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 3)
+      from ${sql(index.schema)}.claim_embedding_batch(10, interval '5 minutes', 3)
     `;
     assert.equal(reclaimed.length, 1);
     await sql`
-      select ${sql(index.schema)}.release_embedding(${first.queue_id}::bigint, 0)
+      select ${sql(index.schema)}.release_embedding(${first.queue_id}::bigint, interval '0 milliseconds')
     `;
     await sql`
-      select * from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 3)
+      select * from ${sql(index.schema)}.claim_embedding_batch(10, interval '5 minutes', 3)
     `;
+    await assert.rejects(
+      () =>
+        sql`
+          select ${sql(index.schema)}.complete_embedding
+          ( ${first.queue_id}::bigint
+          , ${inserted.id}::uuid
+          , ${first.content_version}
+          , null::public.halfvec(4)
+          )
+        `,
+      (err: { readonly code?: string }) => err.code === "22023",
+    );
     const [completed] = await sql<{ outcome: string }[]>`
       select ${sql(index.schema)}.complete_embedding
       ( ${first.queue_id}::bigint
@@ -758,9 +770,16 @@ test("embedding queue routines are callable directly from SQL", async () => {
     `;
     assert.equal(completed?.outcome, "completed");
 
+    // Fractional milliseconds in TypeScript options round-trip through interval arithmetic.
+    await index.upsert({ content: "fractional lease", tree: "docs" });
+    const fractionalPass = await index.processEmbeddings({
+      leaseDurationMs: 1000.5,
+    });
+    assert.equal(fractionalPass.embedded, 1);
+
     const [pruned] = await sql<{ n: string }[]>`
-      select ${sql(index.schema)}.prune_embedding_queue(0)::text as n
+      select ${sql(index.schema)}.prune_embedding_queue(interval '0 milliseconds')::text as n
     `;
-    assert.equal(pruned?.n, "1");
+    assert.equal(pruned?.n, "2");
   });
 });

@@ -3,7 +3,7 @@
 --------------------------------------------------------------------------------
 create or replace function {{schema_ident}}.claim_embedding_batch
 ( _batch_size integer default 10
-, _lease_ms bigint default 300000
+, _lease interval default '5 minutes'
 , _max_attempts integer default 3
 )
 returns table
@@ -79,7 +79,7 @@ begin
     update {{schema_ident}}.embedding_queue q
     set
       attempts = q.attempts + 1
-    , visible_at = now() + (_lease_ms * interval '1 millisecond')
+    , visible_at = now() + _lease
     , updated_at = now()
     from joined j
     where q.id = j.id
@@ -113,6 +113,14 @@ create or replace function {{schema_ident}}.complete_embedding
 )
 returns text
 as $func$
+declare
+  _outcome text;
+begin
+  if _embedding is null then
+    raise exception 'embedding must not be null'
+      using errcode = 'invalid_parameter_value';
+  end if;
+
   with active as
   (
     select
@@ -148,7 +156,11 @@ as $func$
     returning q.outcome
   )
   select coalesce((select f.outcome from finalized f), 'cancelled')
-$func$ language sql volatile security invoker
+  into _outcome;
+
+  return _outcome;
+end;
+$func$ language plpgsql volatile security invoker
 set search_path to pg_catalog, public, pg_temp
 ;
 
@@ -177,14 +189,14 @@ set search_path to pg_catalog, public, pg_temp
 --------------------------------------------------------------------------------
 create or replace function {{schema_ident}}.release_embedding
 ( _queue_id bigint
-, _backoff_ms bigint default 0
+, _backoff interval default '0 milliseconds'
 )
 returns void
 as $func$
   update {{schema_ident}}.embedding_queue
   set
     attempts = greatest(attempts - 1, 0)
-  , visible_at = now() + (_backoff_ms * interval '1 millisecond')
+  , visible_at = now() + _backoff
   , updated_at = now()
   where id = _queue_id
   and outcome is null
@@ -197,7 +209,7 @@ set search_path to pg_catalog, public, pg_temp
 -- prune_embedding_queue
 --------------------------------------------------------------------------------
 create or replace function {{schema_ident}}.prune_embedding_queue
-( _retention_ms double precision
+( _retention interval default '7 days'
 )
 returns bigint
 as $func$
@@ -205,7 +217,7 @@ as $func$
   (
     delete from {{schema_ident}}.embedding_queue
     where outcome is not null
-    and created_at < now() - (_retention_ms * interval '1 millisecond')
+    and created_at < now() - _retention
     returning id
   )
   select count(*)::bigint
