@@ -44,14 +44,71 @@ export class SearchgresError extends Error {
 export class InvalidIndexError extends SearchgresError {
   readonly schema: string;
 
-  constructor(schema: string, options?: ErrorOptions) {
+  constructor(
+    schema: string,
+    options?: ErrorOptions & { readonly detail?: string },
+  ) {
+    const suffix = options?.detail ? `: ${options.detail}` : "";
     super(
       "INVALID_INDEX",
-      `Schema ${JSON.stringify(schema)} is not a searchgres index`,
+      `Schema ${JSON.stringify(schema)} is not a searchgres index${suffix}`,
       options,
     );
     this.schema = schema;
   }
+}
+
+/** @internal Oldest schema format version accepted by `migrateIndex`. */
+export const MINIMUM_MIGRATABLE_SCHEMA_VERSION = "2";
+
+const CANONICAL_SCHEMA_VERSION_RE = /^[1-9][0-9]*$/;
+
+/** @internal Parse a canonical positive decimal schema-version string as a BigInt. */
+export function parseSchemaVersion(version: string): bigint | null {
+  if (!CANONICAL_SCHEMA_VERSION_RE.test(version)) {
+    return null;
+  }
+  return BigInt(version);
+}
+
+/**
+ * @internal Compare two canonical positive decimal schema-version strings
+ * numerically, never lexically ("10" > "3"). Returns null if either string is
+ * malformed.
+ */
+export function compareSchemaVersions(
+  left: string,
+  right: string,
+): -1 | 0 | 1 | null {
+  const l = parseSchemaVersion(left);
+  const r = parseSchemaVersion(right);
+  if (l === null || r === null) {
+    return null;
+  }
+  return l < r ? -1 : l > r ? 1 : 0;
+}
+
+function schemaVersionMessage(
+  schema: string,
+  schemaVersion: string,
+  supportedVersion: string,
+): string {
+  const cmp = compareSchemaVersions(schemaVersion, supportedVersion);
+  if (cmp === 1) {
+    return `Index ${JSON.stringify(schema)} uses newer schema format ${schemaVersion}; this library supports ${supportedVersion}. Upgrade searchgres to a compatible version.`;
+  }
+  const actual = parseSchemaVersion(schemaVersion);
+  const supported = parseSchemaVersion(supportedVersion);
+  const minimumMigratable = BigInt(MINIMUM_MIGRATABLE_SCHEMA_VERSION);
+  if (
+    actual !== null &&
+    supported !== null &&
+    actual >= minimumMigratable &&
+    actual < supported
+  ) {
+    return `Index ${JSON.stringify(schema)} uses schema format ${schemaVersion}; this library supports ${supportedVersion}. Run migrateIndex or searchgres migrate before opening the index.`;
+  }
+  return `Index ${JSON.stringify(schema)} uses schema format ${schemaVersion}; this library supports ${supportedVersion}. Create a new index and reindex.`;
 }
 
 export class SchemaVersionError extends SearchgresError {
@@ -67,7 +124,7 @@ export class SchemaVersionError extends SearchgresError {
   ) {
     super(
       "SCHEMA_VERSION",
-      `Index ${JSON.stringify(schema)} uses schema format ${schemaVersion}; this library supports ${supportedVersion}. Create a new index and reindex.`,
+      schemaVersionMessage(schema, schemaVersion, supportedVersion),
       options,
     );
     this.schema = schema;

@@ -51,7 +51,7 @@ try {
         "-d",
         "postgres",
         "-c",
-        "select 1",
+        "create extension if not exists vector with schema public; create extension if not exists pg_textsearch with schema public; create extension if not exists ltree with schema public;",
       ],
       { stdout: "ignore", stderr: "ignore" },
     );
@@ -67,6 +67,7 @@ try {
     env: {
       ...process.env,
       TEST_DATABASE_URL: `postgresql://postgres@127.0.0.1:${port}/postgres`,
+      TEST_POSTGRES_CONTAINER: container,
     },
     stdout: "inherit",
     stderr: "inherit",

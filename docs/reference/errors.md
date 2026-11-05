@@ -167,7 +167,9 @@ version marker or the expected shape is missing). Carries `schema`.
 The index was created by an incompatible searchgres.js schema format. Carries
 `schema`, `schemaVersion`, and `supportedVersion`.
 
-**Recover:** create a new index and reindex; there is no in-place upgrade. See
+**Recover:** for a supported prior format (`2`), run `migrateIndex(sql, schema)`
+or `searchgres migrate` during a maintenance window. If the database format is
+newer than the library, upgrade `searchgres`. For format `1`, see
 [Rebuild and cut over](../guides/indexes.md#rebuild-and-cut-over).
 
 ## Database timeouts

@@ -13,6 +13,7 @@ import { controllableEmbeddingModel } from "./support/embedding.ts";
 
 let sql: Sql;
 let createIndex: typeof import("../src/create-index.ts").createIndex;
+let migrateIndex: typeof import("../src/migrate-index.ts").migrateIndex;
 let openIndex: typeof import("../src/open-index.ts").openIndex;
 let dropIndex: typeof import("../src/drop-index.ts").dropIndex;
 const exporter = new InMemorySpanExporter();
@@ -27,6 +28,7 @@ before(async () => {
   context.setGlobalContextManager(contextManager.enable());
   trace.setGlobalTracerProvider(provider);
   ({ createIndex } = await import("../src/create-index.ts"));
+  ({ migrateIndex } = await import("../src/migrate-index.ts"));
   ({ openIndex } = await import("../src/open-index.ts"));
   ({ dropIndex } = await import("../src/drop-index.ts"));
   sql = connect();
@@ -73,23 +75,71 @@ test("index lifecycle spans parent their SQL and expose index shape", async () =
     const createSql = sqlChildren(created.spanContext().spanId);
     assert.ok(createSql.length > 5, "create operation did not parent its SQL");
     assert.ok(createSql.every((span) => span.kind === SpanKind.CLIENT));
-    const { schemaDefinitions, indexDefinitions } = await import(
-      "../src/db/definitions.ts"
-    );
-    for (const definition of [...schemaDefinitions, ...indexDefinitions]) {
+    const { bootstrapMigrations, idempotentMigrations, incrementalMigrations } =
+      await import("../src/db/definitions.ts");
+    const allMigrations = [
+      ...bootstrapMigrations,
+      ...incrementalMigrations,
+      ...idempotentMigrations,
+    ];
+    for (const migration of allMigrations) {
       const statement = createSql.find(
-        (span) => span.name === definition.spanName,
+        (span) => span.name === `${migration.type}:${migration.name}`,
       );
-      assert.ok(statement, definition.source);
-      assert.equal(
-        statement.attributes["db.operation.name"],
-        definition.dbOperationName,
-      );
+      assert.ok(statement, migration.file);
+      assert.equal(statement.attributes["db.operation.name"], "CREATE");
       assert.equal(statement.attributes["db.namespace"], schema);
+      assert.equal(
+        statement.attributes["searchgres.migration.name"],
+        migration.name,
+      );
+      assert.equal(
+        statement.attributes["searchgres.migration.file"],
+        migration.file,
+      );
+      assert.equal(
+        statement.attributes["searchgres.migration.type"],
+        migration.type,
+      );
+      assert.equal(
+        statement.attributes["searchgres.migration.schema_version"],
+        "3",
+      );
       const text = statement.attributes["db.query.text"];
       assert.equal(typeof text, "string");
-      assert.ok(String(text).length > 0, definition.source);
-      assert.ok(!String(text).includes("{{"), definition.source);
+      assert.ok(String(text).length > 0, migration.file);
+      assert.ok(!String(text).includes("{{"), migration.file);
+    }
+
+    exporter.reset();
+    await migrateIndex(sql, schema);
+    await provider.forceFlush();
+    const migrated = operation("searchgres.index.migrate");
+    assert.ok(migrated);
+    assert.equal(migrated.attributes["searchgres.index.schema"], schema);
+    assert.equal(
+      migrated.attributes["searchgres.index.vector_type"],
+      "halfvec",
+    );
+    assert.equal(migrated.attributes["searchgres.index.dimensions"], 4);
+    const migrateSql = sqlChildren(migrated.spanContext().spanId);
+    assert.ok(
+      migrateSql.length > 5,
+      "migrate operation did not parent its SQL",
+    );
+    for (const migration of idempotentMigrations) {
+      const statement = migrateSql.find(
+        (span) => span.name === `idempotent:${migration.name}`,
+      );
+      assert.ok(statement, migration.file);
+      assert.equal(
+        statement.attributes["searchgres.migration.file"],
+        migration.file,
+      );
+      assert.equal(
+        statement.attributes["searchgres.migration.type"],
+        "idempotent",
+      );
     }
 
     exporter.reset();
@@ -119,8 +169,10 @@ test("index lifecycle spans parent their SQL and expose index shape", async () =
   }
 });
 
-test("unsafe definition failures retain SQL text, error status and typed timeout mapping", async () => {
-  const { executeDefinitions } = await import("../src/db/definitions.ts");
+test("unsafe migration failures retain SQL text, migration file metadata, line/column location, error status and typed timeout mapping", async () => {
+  const { defineMigration, executeMigrationFile } = await import(
+    "../src/db/definitions.ts"
+  );
   const { indexSqlContext } = await import("../src/db/template.ts");
   const { StatementTimeoutError } = await import("../src/errors.ts");
   const schema = randomTestSchema();
@@ -130,27 +182,54 @@ test("unsafe definition failures retain SQL text, error status and typed timeout
   await assert.rejects(
     sql.begin(async (tx) => {
       await tx`set local statement_timeout = '20ms'`;
-      await executeDefinitions(tx, context, [
-        {
-          sql: statement,
-          source: "test/timeout.sql",
-          spanName: "testDefinitionTimeout",
-          dbOperationName: "SELECT",
-        },
-      ]);
+      await executeMigrationFile(
+        tx,
+        context,
+        defineMigration("idempotent", "idempotent/999_timeout.sql", statement),
+        "3",
+      );
     }),
     StatementTimeoutError,
   );
   await provider.forceFlush();
   const failed = exporter
     .getFinishedSpans()
-    .find((span) => span.name === "testDefinitionTimeout");
+    .find((span) => span.name === "idempotent:999_timeout");
   assert.ok(failed);
   assert.equal(failed.instrumentationScope.name, "searchgres/sql");
   assert.equal(failed.attributes["db.query.text"], statement);
   assert.equal(failed.attributes["db.namespace"], schema);
+  assert.equal(
+    failed.attributes["searchgres.migration.file"],
+    "idempotent/999_timeout.sql",
+  );
+  assert.equal(failed.attributes["searchgres.migration.type"], "idempotent");
   assert.equal(failed.status.code, SpanStatusCode.ERROR);
   assert.ok(failed.events.some((event) => event.name === "exception"));
+
+  exporter.reset();
+  const syntaxSql = "select 1;\nselect * from\n  pg_catalog.no_such_relation;";
+  await assert.rejects(
+    sql.begin(async (tx) => {
+      await executeMigrationFile(
+        tx,
+        context,
+        defineMigration("incremental", "incremental/999_syntax.sql", syntaxSql),
+        "3",
+      );
+    }),
+  );
+  await provider.forceFlush();
+  const located = exporter
+    .getFinishedSpans()
+    .find((span) => span.name === "incremental:999_syntax");
+  assert.ok(located);
+  assert.equal(
+    located.attributes["searchgres.migration.file"],
+    "incremental/999_syntax.sql",
+  );
+  assert.equal(located.attributes["searchgres.sql.line"], 3);
+  assert.equal(located.attributes["searchgres.sql.column"], 3);
 });
 
 test("public index operations emit one domain span with safe useful attributes", async () => {

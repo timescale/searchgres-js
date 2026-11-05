@@ -140,8 +140,8 @@ from a process that has your embedding credentials. See
 
 ## Stability
 
-These routine signatures are part of the index's immutable schema format, not
-the npm package version. Multiple package releases may support the same format.
-A future schema format may change the routines; moving to an incompatible format
-means creating a new index and reindexing rather than upgrading the schema in
-place.
+These routine signatures are part of the index's schema format (`3`), not the
+npm package version. Multiple package releases may support the same format.
+When a new schema format updates the routines, upgrade existing format-`2` or
+later indexes during a maintenance window with `migrateIndex(sql, schema)` or
+`searchgres migrate`.

@@ -140,10 +140,35 @@ const archive = await openIndex(other, "archive_index", { embedding: model });
 
 Every query is fully schema-qualified, so indexes sharing a pool never interfere.
 
+## Upgrade an index in place
+
+When a new searchgres.js release updates the schema format (from format `2` to
+`3` or later), upgrade an existing index during a maintenance window with
+[`migrateIndex`](../reference/api.md#migrateindexsql-schema-options--promisemigrateindexresult):
+
+```ts
+import { migrateIndex, openIndex } from "searchgres";
+
+await migrateIndex(sql, "docs_index");
+const index = await openIndex(sql, "docs_index", { embedding: model });
+```
+
+Pause readers, writers, workers, and administrative DDL (`createIndex`,
+`dropIndex`, `init`, `destroy`) against the index while migrating, then reopen
+handles afterward.
+
+The calling database role must own the index schema. Migration is one-way and
+preserves existing records, embeddings, queue rows, and BM25/HNSW settings,
+returning `{ schema, fromVersion, toVersion, applied }`. Older `0.3.x` clients
+cannot open a format-`3` index; upgrade the client package. If the database
+connection drops during `COMMIT`, reconnect and check `<schema>.version` or
+rerun `migrateIndex`, which is idempotent at the target version.
+
 ## Rebuild and cut over
 
-An index's shape is immutable. To change `dimensions`, switch vector type, or
-move to a new embedding model, build a fresh index and cut over:
+An index's vector shape is immutable. To change `dimensions`, switch vector type,
+move to a new embedding model, or replace a legacy format-`1` index, build a
+fresh index and cut over:
 
 1. **Create** a new index schema (e.g. `docs_index_v2`) with the new shape.
 2. **Backfill** by reading from your source of truth and `upsertMany`-ing into

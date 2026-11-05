@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { Sql } from "postgres";
-import { createIndex } from "../src/create-index.ts";
+import { createIndex, SCHEMA_FORMAT_VERSION } from "../src/create-index.ts";
 import {
-  executeDefinitions,
-  schemaDefinitions,
+  defineMigration,
+  executeMigrationFile,
+  provisionMigration,
 } from "../src/db/definitions.ts";
 import {
   indexSqlContext,
@@ -72,28 +73,35 @@ test("catalog text configuration literals are escaped and not recursively templa
   }
 });
 
-test("definition execution participates in caller rollback after a late DDL failure", async () => {
+test("migration execution participates in caller rollback after a late DDL failure", async () => {
   const schema = randomTestSchema();
   const context = indexSqlContext(schema, { dimensions: 4 }, "'english'");
   try {
     let failed = false;
     try {
       await sql.begin(async (tx) => {
-        await executeDefinitions(tx, context, schemaDefinitions);
+        await executeMigrationFile(
+          tx,
+          context,
+          provisionMigration,
+          SCHEMA_FORMAT_VERSION,
+        );
         assert.equal(
           (
             await tx`select pg_catalog.to_regnamespace(${schema}) is not null as present`
           )[0]?.present,
           true,
         );
-        await executeDefinitions(tx, context, [
-          {
-            sql: "create table {{schema_ident}}.broken (id pg_catalog.no_such_type)",
-            source: "test/invalid.sql",
-            spanName: "testInvalidDefinition",
-            dbOperationName: "CREATE",
-          },
-        ]);
+        await executeMigrationFile(
+          tx,
+          context,
+          defineMigration(
+            "incremental",
+            "incremental/999_broken.sql",
+            "create table {{schema_ident}}.broken (id pg_catalog.no_such_type)",
+          ),
+          SCHEMA_FORMAT_VERSION,
+        );
       });
     } catch (error) {
       assert.equal(postgresErrorCode(error), "42704");

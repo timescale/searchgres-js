@@ -5,11 +5,7 @@ import {
   type ExtensionRequirement,
   ensureExtension,
 } from "../src/db/extensions.ts";
-import {
-  acquireAdvisoryLock,
-  advisoryLockKey,
-  CREATE_INDEX_LOCK_KEY,
-} from "../src/db/lock.ts";
+import { acquireAdvisoryLock, advisoryLockKey } from "../src/db/lock.ts";
 import {
   ensurePostgresVersion,
   MINIMUM_POSTGRES_VERSION_NUM,
@@ -43,11 +39,6 @@ test("accepts PostgreSQL 18", async () => {
 
 test("ensures supplied extensions with an empty search path", async () => {
   const extensions = await sql.begin(async (tx) => {
-    // This test provisions extensions directly while other test files may call
-    // createIndex against the same fresh database. Honor ensureExtension's
-    // caller-owned locking contract so those CREATE EXTENSION statements
-    // cannot race.
-    await acquireAdvisoryLock(tx, CREATE_INDEX_LOCK_KEY);
     await tx.unsafe("set local search_path to ''");
     const results = [];
     for (const requirement of requiredExtensions) {

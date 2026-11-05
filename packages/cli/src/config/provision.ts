@@ -1,7 +1,13 @@
 import { mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as clack from "@clack/prompts";
-import { createIndex, dropIndex, noEmbedding, openIndex } from "searchgres";
+import {
+  createIndex,
+  dropIndex,
+  migrateIndex,
+  noEmbedding,
+  openIndex,
+} from "searchgres";
 import type { Flags } from "../flags.ts";
 import { createPool } from "../runtime/index.ts";
 import { InputError } from "../runtime/report.ts";
@@ -11,7 +17,7 @@ import { dotenvLine, writeDotenvExample } from "./dotenv.ts";
 import { assertConfiguredIndexShape } from "./index-shape.ts";
 
 export async function provision(
-  command: "init" | "destroy",
+  command: "init" | "migrate" | "destroy",
   flags: Flags,
 ): Promise<unknown> {
   if (command === "destroy" && !flags.has("yes"))
@@ -22,6 +28,9 @@ export async function provision(
     if (command === "destroy") {
       await dropIndex(sql, config.index.schema);
       return { destroyed: config.index.schema };
+    }
+    if (command === "migrate") {
+      return await migrateIndex(sql, config.index.schema);
     }
     const validate = async () => {
       const index = await openIndex(sql, config.index.schema, {

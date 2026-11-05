@@ -8,6 +8,7 @@ Import everything from the package root:
 ```ts
 import {
   createIndex,
+  migrateIndex,
   openIndex,
   dropIndex,
   truncateCharacters,
@@ -51,8 +52,35 @@ in it is persisted or affects the resulting index.
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `lockTimeoutMs` | `30000` | How long to wait for the database-wide lock that serializes concurrent `createIndex` calls before throwing [`LockTimeoutError`](errors.md#database-timeouts). `0` waits indefinitely. |
+| `lockTimeoutMs` | `30000` | How long to wait for the per-schema lock that serializes concurrent `createIndex` and `migrateIndex` calls targeting the same schema before throwing [`LockTimeoutError`](errors.md#database-timeouts). `0` waits indefinitely. |
 | `transactionTimeoutMs` | `1200000` (20 min) | Budget for the whole provisioning transaction before throwing [`TransactionTimeoutError`](errors.md#database-timeouts). `0` disables the limit. |
+
+### `migrateIndex(sql, schema, options?) → Promise<MigrateIndexResult>`
+
+Explicitly migrates an existing index schema in place to the current schema
+format (`3`). Accepts schema format `2` (adopting it without replaying initial
+table/index creation) and `3` (applying any unapplied incremental steps and
+refreshing repeatable functions and triggers). Rejects format `1` and newer
+formats with [`SchemaVersionError`](errors.md), and rejects missing or
+unexpected migration ledger tables with [`InvalidIndexError`](errors.md).
+Requires the calling database role to own the index schema (checked via
+`pg_has_role(current_user, nspowner, 'USAGE')`, raising PostgreSQL
+`insufficient_privilege` `42501` otherwise). Needs no embedding model.
+
+```ts
+const result = await migrateIndex(sql, "docs_index", {
+  lockTimeoutMs: 30_000,
+  transactionTimeoutMs: 1_200_000,
+});
+// { schema: "docs_index", fromVersion: "2", toVersion: "3", applied: [] }
+```
+
+`result.applied` lists only incremental migrations that were executed during the
+call (for a format-`2` adoption into format `3`, `001_initial` is recorded as
+already present, so `applied` is `[]`).
+
+Accepts the same `lockTimeoutMs` and `transactionTimeoutMs` budget options as
+`createIndex`.
 
 ### `openIndex(sql, schema, options) → Promise<Index>`
 

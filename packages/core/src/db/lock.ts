@@ -4,14 +4,11 @@ import { runSql } from "../sql/exec.ts";
 
 export type AdvisoryLockKey = readonly [number, number];
 
-/** Derive a stable pair of signed int4 values for PostgreSQL advisory locks. */
+/** Derive a stable pair of signed int4 values for a per-schema advisory lock. */
 export function advisoryLockKey(name: string): AdvisoryLockKey {
   const digest = createHash("sha256").update(name).digest();
   return [digest.readInt32BE(0), digest.readInt32BE(4)];
 }
-
-/** Serializes index provisioning, including required extension installation. */
-export const CREATE_INDEX_LOCK_KEY = advisoryLockKey("searchgres:create-index");
 
 /** Block transaction-locally until an advisory lock is acquired or times out. */
 export async function acquireAdvisoryLock(

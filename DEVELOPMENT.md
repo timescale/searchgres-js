@@ -82,10 +82,11 @@ Both the library build and CLI compilation explicitly configure `.sql` as text.
 This matters on Bun 1.4.4: text attributes on a re-export alone can otherwise
 produce a filesystem asset path instead of an embedded string. Do not introduce
 runtime file loading. Persisted index definitions are authored in
-`packages/core/src/db/sql/`, one execution unit per file. The explicit manifest
-in `db/definitions.ts` preserves dependency order and per-statement SQL spans.
-TypeScript still owns validation, preflight, transactions, locks, timeouts,
-parameterized runtime queries, and the final bound schema-version insert.
+`packages/core/src/db/sql/` under `bootstrap/`, `incremental/`, and `idempotent/`,
+one migration file per execution unit with numeric filename prefixes defining
+execution order and per-file SQL spans (`bootstrap:<name>`, `incremental:<name>`,
+`idempotent:<name>`). TypeScript still owns validation, preflight, transactions,
+locks, timeouts, parameterized runtime queries, and migration ledger updates.
 
 `db/template.ts` uses Memory Engine-style `{{name}}` placeholders with a closed
 vocabulary and prepared identifier/literal/numeric fragments. Literal fragments
@@ -95,16 +96,12 @@ from validated config, and the text configuration literal comes from
 missing tokens fail. No includes, loops, expressions or signature directives.
 The allowed names and their constructors live together in `template.ts`.
 
-Format 2 is still immutable: extraction does not make these files migrations.
-There is no ledger, replacement-function helper, or upgrade API. Function-body
-indentation intentionally matches the old definitions exactly. Do not reformat
-bodies or update catalog goldens just to make an equivalence test pass. The
-pre-extraction fixtures, provenance and capture instructions are under
-`packages/core/test/fixtures/schema-format-2/`. Their integration tests compare
-both vector types with default/custom index settings, and retain exact function
-bodies/settings/signatures plus tables, indexes, constraints, triggers, sequences
-and object inventory. Capture runs only as an explicit maintenance action
-against committed old DDL, never automatically during tests.
+`db/definitions.ts` derives each migration's name from its numbered filename and
+sorts `bootstrapMigrations`, `incrementalMigrations`, and `idempotentMigrations`
+alphanumerically. Released incremental SQL files are locked in
+`packages/core/src/db/sql/incremental/frozen.txt` (`<sha256> <filename>`),
+verified by `./bun run check:sql` (part of `./bun run check`) and updated at
+release time via `./bun run freeze:sql`.
 
 Node source tests preload `scripts/sql-loader.mjs`; it handles SQL imports only
 and delegates other module loading to Node. The loader is development-only and
@@ -131,7 +128,97 @@ expressions still use strict checking. npm installation requires registry access
 `test:package` runs at the end of `test:db`/`check:full` and in the Node 22/24
 artifact CI matrix; `test:unit` covers SQL fidelity, external dependencies,
 declarations/maps, stale output, and failed-build cleanup without a database.
-It does not add a migration API or change schema format 2.
+
+## Modifying and extending index SQL
+
+Index SQL lives in `packages/core/src/db/sql/`:
+
+- `bootstrap/`: `001_provision.sql` and `002_migration.sql` (schema, comment,
+  `version` table, `migration` table).
+- `incremental/`: one-time schema and data migrations (`001_initial.sql`,
+  `002_...sql`), executed in `NNN_name.sql` order and recorded by filename stem
+  in `<schema>.migration`. See
+  [`packages/core/src/db/sql/incremental/README.md`](packages/core/src/db/sql/incremental/README.md).
+- `idempotent/`: repeatable trigger and routine files (`001_triggers.sql`,
+  `002_records.sql`, `003_tree.sql`, `004_search.sql`), executed in
+  `NNN_name.sql` order on every creation and `migrateIndex` pass. See
+  [`packages/core/src/db/sql/idempotent/README.md`](packages/core/src/db/sql/idempotent/README.md).
+
+### 1. Changing a routine or trigger body (same signature)
+
+1. Edit the function or trigger in `packages/core/src/db/sql/idempotent/*.sql`.
+   Idempotent files may only use variables present in `migrationSqlContext`
+   (`{{schema_ident}}`, `{{vector_type_ident}}`, `{{dimensions_int}}`,
+   `{{cosine_opclass_ident}}`, `{{bm25_index_literal}}`).
+2. If the change alters persisted database behavior, increment
+   `SCHEMA_FORMAT_VERSION` in `packages/core/src/create-index.ts`.
+
+### 2. Adding a table, column, constraint, index, or backfill
+
+1. Add a new numbered file `packages/core/src/db/sql/incremental/NNN_<name>.sql`
+   using the next sequential 3-digit prefix (no gaps). Never edit or rename an
+   incremental file that has already shipped in a release.
+2. Import the new file in `packages/core/src/db/definitions.ts` and add a
+   `defineMigration("incremental", "incremental/NNN_<name>.sql", sql)` entry to
+   `incrementalMigrations`.
+3. Increment `SCHEMA_FORMAT_VERSION` in `packages/core/src/create-index.ts`.
+4. Remember that `incremental/` runs before `idempotent/`. On a fresh install,
+   managed triggers do not exist yet while incrementals run; on an upgrade, the
+   prior version's triggers are active, and if versions were skipped,
+   intermediate releases' idempotent files have not run. If a backfill depends
+   on trigger or helper behavior, install that state explicitly inside the
+   incremental file.
+
+### 3. Changing a function signature, parameter name, or return type
+
+`create or replace function` cannot change parameter names or return types in
+place (`42P13`), and changing argument types leaves the old overload behind.
+
+1. Add a new incremental file `packages/core/src/db/sql/incremental/NNN_<name>.sql`
+   that drops the old signature by argument types with default `RESTRICT`
+   behavior:
+
+   ```sql
+   drop function if exists {{schema_ident}}.my_routine
+   ( pg_catalog.uuid
+   , pg_catalog.int4
+   );
+   ```
+
+   If the routine may have custom caller `EXECUTE` grants, capture `pg_proc.proacl`
+   before dropping and replay those grants onto the new signature. Do not drop
+   sibling overloads of intentionally overloaded functions (`count_tree`).
+2. Update the `create or replace function` definition in `idempotent/*.sql` to
+   the new signature, register the incremental file in `db/definitions.ts`, and
+   increment `SCHEMA_FORMAT_VERSION`.
+
+### 4. Testing and freezing SQL changes
+
+During development, new `incremental/NNN_*.sql` files can remain unfrozen while
+you iterate; `./bun run check:sql` verifies existing entries in `frozen.txt` and
+allows trailing unfrozen files.
+
+Run the upgrade and catalog comparison suite:
+
+```sh
+./bun run check
+./bun scripts/with-postgres.ts ./bun run --filter searchgres test:db
+```
+
+`packages/core/test/upgrade/schema-format.integration.test.ts` provisions real
+prior-version indexes, upgrades them with `migrateIndex`, and compares every
+catalog section (`relations`, `columns`, `constraints`, `indexes`, `functions`,
+`triggers`, `inventory`) against a fresh `createIndex` schema. Add a behavioral
+test in `packages/core/test/upgrade/upgrade.integration.test.ts` covering the
+new migration's effect on existing records and queue state.
+
+When preparing a release, freeze any new incremental files so their SHA-256
+hashes are recorded in `packages/core/src/db/sql/incremental/frozen.txt`:
+
+```sh
+./bun run freeze:sql
+./bun run check:full
+```
 
 ## Filter DSL
 
@@ -251,12 +338,14 @@ publish with provenance. CI tests the packed core under Node 22/24 and Bun.
 Before tagging:
 
 1. Match versions in `packages/core/package.json` and `packages/core/src/version.ts`.
-2. Update `CHANGELOG.md` and set the pinned binary-installation example in
+2. If the release adds any new `packages/core/src/db/sql/incremental/*.sql` file,
+   freeze it with `./bun run freeze:sql` so `frozen.txt` locks its SHA-256 hash.
+3. Update `CHANGELOG.md` and set the pinned binary-installation example in
    `docs/installation.md` to the release tag. It must name a release containing
    the direct CLI assets, not an old server-era tag.
-3. Run `./bun run check:full`, review startup measurements and Compose gates,
+4. Run `./bun run check:full`, review startup measurements and Compose gates,
    commit and merge to `main`.
-4. Tag that commit and push the immutable tag.
+5. Tag that commit and push the immutable tag.
 
 Never move/reuse a published tag. A rerun skips an already-published npm version.
 For first publication, configure a short-lived granular `NPM_TOKEN` Actions

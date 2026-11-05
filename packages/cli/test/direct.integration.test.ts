@@ -110,6 +110,31 @@ afterAll(async () => {
 test("provisioning is strict and provider-free; config generation is offline", async () => {
   expect(calls).toBe(0);
   expect((await cli(["init", "--if-not-exists"])).value.created).toBe(false);
+  // Simulate an unmigrated format-2 index (version 2, no migration table):
+  // operational CLI commands must refuse it until `searchgres migrate` runs.
+  await sql.unsafe(`drop table "${schema}".migration`);
+  await sql.unsafe(
+    `alter table "${schema}".version alter column version type text using version::text`,
+  );
+  await sql.unsafe(`update "${schema}".version set version = '2'`);
+  const beforeMigrate = await cli(["info"], 1);
+  expect(beforeMigrate.err).toContain("SCHEMA_VERSION");
+
+  const migrated = (await cli(["migrate"])).value;
+  expect(migrated).toEqual({
+    schema,
+    fromVersion: "2",
+    toVersion: "3",
+    applied: [],
+  });
+  // Repeating `searchgres migrate` at version 3 is a safe idempotent refresh.
+  expect((await cli(["migrate"])).value).toEqual({
+    schema,
+    fromVersion: "3",
+    toVersion: "3",
+    applied: [],
+  });
+  expect(calls).toBe(0);
   const mismatch = join(dir, "mismatch.json5");
   await Bun.write(
     mismatch,

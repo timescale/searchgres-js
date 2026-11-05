@@ -28,7 +28,7 @@ Each searchgres.js index is a literal caller-named PostgreSQL schema containing:
 - native indexes for vectors, BM25, trees, metadata, and time;
 - integrity and queue triggers;
 - schema-local CRUD, tree, and search routines;
-- an immutable schema-format marker.
+- a schema-format `version` marker and `migration` ledger.
 
 There is no global searchgres.js catalog. Your application tracks its index names.
 Several schemas can share one `postgres.js` pool, and separate pools can point at
@@ -129,11 +129,12 @@ After retrieval, it may rerank, deduplicate, expand neighboring chunks, format
 context, and call a generation model. Because search results contain the full
 record, these stages do not require a second fetch.
 
-## Immutable index shape
+## Index shape and explicit migrations
 
 Vector type, dimensions, and index settings become PostgreSQL objects at
-creation. A schema-format marker covers persisted behavior as well as storage.
-To change an incompatible shape or embedding model, create a new schema,
+creation. Routine and schema format upgrades are applied explicitly with
+`migrateIndex` or `searchgres migrate`; `openIndex` never runs DDL. To change
+vector dimensions, vector type, or the embedding model, create a new schema,
 backfill it, validate it, and switch application traffic.
 
 This makes database state explicit and avoids hidden migration or configuration

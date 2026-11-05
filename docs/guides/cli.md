@@ -94,13 +94,18 @@ and multi-batch operations can take longer than one request timeout.
 ```sh
 searchgres init
 searchgres init --if-not-exists
+searchgres migrate
 searchgres info
 searchgres destroy --yes
 ```
 
 `init --if-not-exists` accepts only an existing valid index with matching shape.
-It never silently accepts an unrelated same-named schema. `destroy` drops exactly
-the configured schema. Operational commands have no schema override;
+It never silently accepts an unrelated same-named schema. `migrate` upgrades an
+existing configured index in place during a maintenance window without
+contacting the embedding provider, and reports `{ schema, fromVersion, toVersion, applied }`.
+Migration requires the schema owner role and is one-way (older `0.3.x` binaries
+reject an upgraded schema). `destroy` drops exactly the configured schema.
+Operational commands have no schema override;
 `config --schema` only authors a config file. `info` reports index shape, model,
 truncation, and queue status without credentials or endpoint URLs.
 
@@ -262,7 +267,7 @@ forces termination; unfinished mutations may have committed, and abandoned
 worker claims recover through queue leases. Cancellation is not a rollback
 promise.
 
-Use a provisioning role for `init`/`destroy` and an appropriately restricted
-runtime role for normal CLI/MCP work. Both can use the same config by supplying a
+Use a provisioning role (the schema owner) for `init`/`migrate`/`destroy` and
+an appropriately restricted runtime role for normal CLI/MCP work. Both can use the same config by supplying a
 different database URL environment value. Do not use superuser credentials for
 an untrusted agent. See [production guidance](production.md).
