@@ -679,3 +679,88 @@ test("pruneEmbeddingQueue rejects a non-finite or negative retention", async () 
     }
   });
 });
+
+test("embedding queue routines are callable directly from SQL", async () => {
+  await withIndex(async (index) => {
+    const inserted = await index.upsert({
+      content: "direct sql queue",
+      tree: "docs",
+    });
+    const [pendingBefore] = await sql<{ n: string }[]>`
+      select ${sql(index.schema)}.pending_embedding_count()::text as n
+    `;
+    assert.equal(pendingBefore?.n, "1");
+
+    const claimed = await sql<
+      {
+        queue_id: string;
+        record_id: string;
+        content_version: number;
+        content: string;
+        claimed: boolean;
+      }[]
+    >`
+      select queue_id::text, record_id, content_version, content, claimed
+      from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 1)
+    `;
+    assert.equal(claimed.length, 1);
+    const first = claimed[0];
+    assert.ok(first);
+    assert.equal(first.record_id, inserted.id);
+    assert.equal(first.claimed, true);
+
+    await sql`
+      select ${sql(index.schema)}.fail_embedding(${first.queue_id}::bigint, 'direct sql failure')
+    `;
+    await sql`
+      update ${sql(index.schema)}.embedding_queue set visible_at = now() where id = ${first.queue_id}::bigint
+    `;
+    // Next claim with max_attempts = 1 sweeps the exhausted row to 'failed'.
+    await sql`select * from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 1)`;
+
+    const failures = await sql<{ queue_id: string; last_error: string }[]>`
+      select queue_id::text, last_error
+      from ${sql(index.schema)}.list_embedding_failures(10, null)
+    `;
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.last_error, "direct sql failure");
+
+    const [statsFailed] = await sql<{ failed: string }[]>`
+      select failed::text from ${sql(index.schema)}.embedding_queue_stats()
+    `;
+    assert.equal(statsFailed?.failed, "1");
+
+    const [retried] = await sql<{ n: string }[]>`
+      select ${sql(index.schema)}.retry_embedding_failures(array[${first.queue_id}::bigint])::text as n
+    `;
+    assert.equal(retried?.n, "1");
+
+    const reclaimed = await sql<
+      { queue_id: string; record_id: string; content_version: number }[]
+    >`
+      select queue_id::text, record_id, content_version
+      from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 3)
+    `;
+    assert.equal(reclaimed.length, 1);
+    await sql`
+      select ${sql(index.schema)}.release_embedding(${first.queue_id}::bigint, 0)
+    `;
+    await sql`
+      select * from ${sql(index.schema)}.claim_embedding_batch(10, 300000, 3)
+    `;
+    const [completed] = await sql<{ outcome: string }[]>`
+      select ${sql(index.schema)}.complete_embedding
+      ( ${first.queue_id}::bigint
+      , ${inserted.id}::uuid
+      , ${first.content_version}
+      , '[1,0,0,0]'::public.halfvec(4)
+      ) as outcome
+    `;
+    assert.equal(completed?.outcome, "completed");
+
+    const [pruned] = await sql<{ n: string }[]>`
+      select ${sql(index.schema)}.prune_embedding_queue(0)::text as n
+    `;
+    assert.equal(pruned?.n, "1");
+  });
+});

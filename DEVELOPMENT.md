@@ -140,7 +140,8 @@ Index SQL lives in `packages/core/src/db/sql/`:
   in `<schema>.migration`. See
   [`packages/core/src/db/sql/incremental/README.md`](packages/core/src/db/sql/incremental/README.md).
 - `idempotent/`: repeatable trigger and routine files (`001_triggers.sql`,
-  `002_records.sql`, `003_tree.sql`, `004_search.sql`), executed in
+  `002_records.sql`, `003_tree.sql`, `004_search.sql`,
+  `005_embedding_queue.sql`), executed in
   `NNN_name.sql` order on every creation and `migrateIndex` pass. See
   [`packages/core/src/db/sql/idempotent/README.md`](packages/core/src/db/sql/idempotent/README.md).
 

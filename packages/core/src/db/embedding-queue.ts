@@ -68,22 +68,20 @@ export interface RetryEmbeddingFailuresResult {
 }
 
 /**
- * Operational queue engine for asynchronous embedding generation.
+ * Operational queue wrappers for asynchronous embedding generation.
  *
- * Unlike CRUD/search (schema-local PL/pgSQL routines), the drain path is
- * set-based dynamic SQL built here in TypeScript: it is not part of the
- * immutable schema format and is not needed by direct SQL writers (only the
- * triggers are). Every statement is fully schema-qualified.
+ * Every operation delegates to a schema-local routine in
+ * `idempotent/005_embedding_queue.sql`.
  *
  * Concurrency model (at-least-once lease):
- *  - A claim locks eligible rows `for update skip locked`, so many drainers on
- *    many processes share one queue without blocking each other.
+ *  - `claim_embedding_batch` locks eligible rows `for update skip locked`, so
+ *    many drainers across processes share one queue without blocking each other.
  *  - Claiming pushes `visible_at` into the future (the lease) and increments
  *    `attempts`, so a crashed drainer's rows become claimable again after the
  *    lease lapses rather than being lost.
  *  - The embedding provider is called OUTSIDE any transaction; write-back is a
- *    separate short transaction. The queue — not the SDK — is the retry
- *    authority.
+ *    separate short call to `complete_embedding`, `fail_embedding`, or
+ *    `release_embedding`.
  *  - Every write-back is guarded by the record's `content_version`, so a vector
  *    generated for a stale record state can never overwrite a newer one.
  */
@@ -119,20 +117,8 @@ interface CandidateRow {
 }
 
 /**
- * Claim up to `batchSize` rows. Runs two statements:
- *  1. a sweep that finalizes rows which exhausted their attempt budget (a row
- *     stranded by a crash after its final claim would otherwise stay pending
- *     forever);
- *  2. the claim itself, which also cancels stale candidates in the same
- *     statement/snapshot.
- *
- * The claim's staleness check is the counterpart to record_integrity's
- * content_version fence: a candidate whose record was deleted (`content is
- * null` via the left join) or whose current `content_version` no longer matches
- * the queued one is cancelled, never claimed. This catches the case a newer
- * queue row cannot — a precomputed vector written with no content change bumps
- * content_version WITHOUT enqueuing a new row, leaving the old row's version
- * behind the record's.
+ * Claim up to `batchSize` rows via `<schema>.claim_embedding_batch`, which
+ * sweeps exhausted rows and claims or cancels candidates in one round trip.
  */
 export async function claimBatch(
   sql: postgres.ISql,
@@ -143,81 +129,19 @@ export async function claimBatch(
     readonly maxAttempts: number;
   },
 ): Promise<ClaimResult> {
-  const queue = sql`${sql(schema)}.embedding_queue`;
-  const record = sql`${sql(schema)}.record`;
-
-  await runSql(
-    sql`
-      update ${queue}
-      set outcome = 'failed'
-        , last_error = coalesce(last_error, 'exceeded max attempts')
-        , updated_at = now()
-      where outcome is null
-        and visible_at <= now()
-        and attempts >= ${options.maxAttempts}
-    `,
-    {
-      spanName: "sweepExhaustedEmbeddings",
-      dbOperationName: "UPDATE",
-      namespace: schema,
-    },
-  );
-
   const candidates = await runSql(
     sql<CandidateRow[]>`
-      with candidate as (
-        -- Lock the oldest eligible rows and skip any a concurrent drainer holds.
-        select q.id, q.record_id, q.content_version
-        from ${queue} q
-        where q.outcome is null
-          and q.visible_at <= now()
-          and q.attempts < ${options.maxAttempts}
-        order by q.visible_at
-        for update skip locked
-        limit ${options.batchSize}
-      ),
-      joined as (
-        -- Left join so a deleted record surfaces as content is null.
-        select
-          c.id
-        , c.record_id
-        , c.content_version
-        , r.content as record_content
-        , r.content_version as current_version
-        from candidate c
-        left join ${record} r on r.id = c.record_id
-      ),
-      cancelled as (
-        -- Stale: record gone, or its content_version moved past the queued one.
-        update ${queue} q
-        set outcome = 'cancelled', updated_at = now()
-        from joined j
-        where q.id = j.id
-          and (j.record_content is null
-               or j.current_version is distinct from j.content_version)
-        returning q.id
-      ),
-      claimed as (
-        -- Fresh: extend the lease and spend one attempt.
-        update ${queue} q
-        set attempts = q.attempts + 1
-          , visible_at = now() + (${options.leaseMs} * interval '1 millisecond')
-          , updated_at = now()
-        from joined j
-        where q.id = j.id
-          and j.record_content is not null
-          and j.current_version is not distinct from j.content_version
-        returning q.id
-      )
       select
-        j.id::text as queue_id
-      , j.record_id
-      , j.content_version
-      , j.record_content as content
-      , (cl.id is not null) as claimed
-      from joined j
-      left join claimed cl on cl.id = j.id
-      order by j.id
+        queue_id::text as queue_id
+      , record_id
+      , content_version
+      , content
+      , claimed
+      from ${sql(schema)}.claim_embedding_batch
+      ( ${options.batchSize}
+      , ${options.leaseMs}
+      , ${options.maxAttempts}
+      )
     `,
     {
       spanName: "claimEmbeddingBatch",
@@ -244,16 +168,9 @@ export async function claimBatch(
 }
 
 /**
- * Version-guarded write-back. Installs the vector only if the queue row is still
- * active AND the record still has the claimed content_version, then finalizes
- * the queue row atomically. Returns 'completed' when the vector was written,
- * 'cancelled' when the record moved on or the row was already terminal.
- *
- * The `active` CTE locks the queue row and yields it only while `outcome is
- * null`; the record write is joined off it, so a vector is never installed for a
- * row another actor already finalized. The record predicate `content_version =`
- * is the fence that rejects a stale vector. Only the queue row is updated (once),
- * avoiding "tuple already modified" from double-updating it in one statement.
+ * Version-guarded write-back via `<schema>.complete_embedding`. Returns
+ * `'completed'` when the vector was written, or `'cancelled'` when the record
+ * moved on or the queue row was already terminal.
  */
 export async function completeEmbedding(
   sql: postgres.ISql,
@@ -266,8 +183,6 @@ export async function completeEmbedding(
     readonly embedding: string;
   },
 ): Promise<"completed" | "cancelled"> {
-  const queue = sql`${sql(schema)}.embedding_queue`;
-  const record = sql`${sql(schema)}.record`;
   const vector =
     vectorType === "halfvec"
       ? sql`${input.embedding}::public.halfvec`
@@ -275,32 +190,16 @@ export async function completeEmbedding(
 
   const [row] = await runSql(
     sql<{ outcome: "completed" | "cancelled" }[]>`
-      with active as (
-        select record_id, content_version
-        from ${queue}
-        where id = ${input.queueId} and outcome is null
-        for update
-      ),
-      written as (
-        update ${record} rec
-        set embedding = ${vector}
-        from active a
-        where rec.id = a.record_id
-          and rec.content_version = a.content_version
-        returning rec.id
-      ),
-      finalized as (
-        update ${queue}
-        set outcome = case when exists (select 1 from written) then 'completed' else 'cancelled' end
-          , updated_at = now()
-        where id = ${input.queueId} and outcome is null
-        returning outcome
-      )
-      select coalesce((select outcome from finalized), 'cancelled') as outcome
+      select ${sql(schema)}.complete_embedding
+      ( ${input.queueId}::pg_catalog.int8
+      , ${input.recordId}
+      , ${input.contentVersion}
+      , ${vector}
+      ) as outcome
     `,
     {
       spanName: "completeEmbedding",
-      dbOperationName: "UPDATE",
+      dbOperationName: "SELECT",
       namespace: schema,
     },
   );
@@ -308,50 +207,43 @@ export async function completeEmbedding(
 }
 
 /**
- * Record a transient failure without finalizing: leaves `outcome` null so the
- * row retries after its lease lapses. The claim sweep terminally fails it once
- * attempts are exhausted. No-op if the row was already finalized or cascade-
- * deleted with its record.
+ * Record a transient failure without finalizing via `<schema>.fail_embedding`.
  */
 export async function failEmbedding(
   sql: postgres.ISql,
   schema: string,
   input: { readonly queueId: string; readonly error: string },
 ): Promise<void> {
-  const queue = sql`${sql(schema)}.embedding_queue`;
   await runSql(
     sql`
-      update ${queue}
-      set last_error = ${input.error}, updated_at = now()
-      where id = ${input.queueId} and outcome is null
+      select ${sql(schema)}.fail_embedding
+      ( ${input.queueId}::pg_catalog.int8
+      , ${input.error}
+      )
     `,
-    { spanName: "failEmbedding", dbOperationName: "UPDATE", namespace: schema },
+    { spanName: "failEmbedding", dbOperationName: "SELECT", namespace: schema },
   );
 }
 
 /**
- * Undo a claim after a rate limit: refund the attempt (a 429 must not spend the
- * budget) and defer visibility by `backoffMs`. Deferring rather than resetting
- * to now() stops another drainer from re-grabbing the row mid-backoff and
- * re-triggering the throttle.
+ * Undo a claim after a rate limit via `<schema>.release_embedding`: refund the
+ * attempt and defer visibility by `backoffMs`.
  */
 export async function releaseEmbedding(
   sql: postgres.ISql,
   schema: string,
   input: { readonly queueId: string; readonly backoffMs: number },
 ): Promise<void> {
-  const queue = sql`${sql(schema)}.embedding_queue`;
   await runSql(
     sql`
-      update ${queue}
-      set attempts = greatest(attempts - 1, 0)
-        , visible_at = now() + (${input.backoffMs} * interval '1 millisecond')
-        , updated_at = now()
-      where id = ${input.queueId} and outcome is null
+      select ${sql(schema)}.release_embedding
+      ( ${input.queueId}::pg_catalog.int8
+      , ${input.backoffMs}
+      )
     `,
     {
       spanName: "releaseEmbedding",
-      dbOperationName: "UPDATE",
+      dbOperationName: "SELECT",
       namespace: schema,
     },
   );
@@ -377,20 +269,13 @@ export async function pruneQueue(
       },
     );
   }
-  const queue = sql`${sql(schema)}.embedding_queue`;
   const [row] = await runSql(
     sql<{ pruned: string }[]>`
-      with deleted as (
-        delete from ${queue}
-        where outcome is not null
-          and created_at < now() - (${retentionMs} * interval '1 millisecond')
-        returning id
-      )
-      select count(*)::text as pruned from deleted
+      select ${sql(schema)}.prune_embedding_queue(${retentionMs})::text as pruned
     `,
     {
       spanName: "pruneEmbeddingQueue",
-      dbOperationName: "DELETE",
+      dbOperationName: "SELECT",
       namespace: schema,
     },
   );
@@ -402,10 +287,9 @@ export async function pendingCount(
   sql: postgres.ISql,
   schema: string,
 ): Promise<number> {
-  const queue = sql`${sql(schema)}.embedding_queue`;
   const [row] = await runSql(
     sql<{ pending: string }[]>`
-      select count(*)::text as pending from ${queue} where outcome is null
+      select ${sql(schema)}.pending_embedding_count()::text as pending
     `,
     {
       spanName: "pendingEmbeddingCount",
@@ -417,9 +301,8 @@ export async function pendingCount(
 }
 
 /**
- * List current unresolved terminal failures in ascending queue-id order.
- * Historical failures are excluded once their record has moved to another
- * content version or acquired an embedding.
+ * List current unresolved terminal failures in ascending queue-id order via
+ * `<schema>.list_embedding_failures`.
  */
 export async function listEmbeddingFailures(
   sql: postgres.ISql,
@@ -431,12 +314,10 @@ export async function listEmbeddingFailures(
     options,
     "listEmbeddingFailures",
   );
-  const queue = sql`${sql(schema)}.embedding_queue`;
-  const record = sql`${sql(schema)}.record`;
   const after =
     parsed.after === undefined
-      ? sql``
-      : sql`and q.id > ${parsed.after}::pg_catalog.int8`;
+      ? sql`null::pg_catalog.int8`
+      : sql`${parsed.after}::pg_catalog.int8`;
 
   const rows = await runSql(
     sql<
@@ -451,22 +332,17 @@ export async function listEmbeddingFailures(
       }[]
     >`
       select
-        q.id::text as queue_id
-      , q.record_id
-      , q.content_version
-      , q.attempts
-      , q.last_error
-      , q.created_at as enqueued_at
-      , coalesce(q.updated_at, q.created_at) as failed_at
-      from ${queue} q
-      join ${record} r
-        on r.id = q.record_id
-       and r.content_version = q.content_version
-      where q.outcome = 'failed'
-        and r.embedding is null
-        ${after}
-      order by q.id
-      limit ${parsed.limit}
+        queue_id::text as queue_id
+      , record_id
+      , content_version
+      , attempts
+      , last_error
+      , enqueued_at
+      , failed_at
+      from ${sql(schema)}.list_embedding_failures
+      ( ${parsed.limit}
+      , ${after}
+      )
     `,
     {
       spanName: "listEmbeddingFailures",
@@ -487,8 +363,8 @@ export async function listEmbeddingFailures(
 }
 
 /**
- * Reset selected current failures to immediately claimable pending work.
- * Stale, resolved, already-retried, pruned, and unknown ids are skipped.
+ * Reset selected current failures to immediately claimable pending work via
+ * `<schema>.retry_embedding_failures`.
  */
 export async function retryEmbeddingFailures(
   sql: postgres.ISql,
@@ -500,36 +376,15 @@ export async function retryEmbeddingFailures(
     options,
     "retryEmbeddingFailures",
   );
-  const queue = sql`${sql(schema)}.embedding_queue`;
-  const record = sql`${sql(schema)}.record`;
   const [row] = await runSql(
     sql<{ retried: string }[]>`
-      with requested as (
-        select id
-        from pg_catalog.unnest(
-          ${sql.array([...parsed.queueIds], POSTGRES_TEXT_OID)}::text[]::pg_catalog.int8[]
-        ) as input(id)
-      ),
-      reset as (
-        update ${queue} q
-        set outcome = null
-          , attempts = 0
-          , last_error = null
-          , visible_at = pg_catalog.now()
-          , updated_at = pg_catalog.now()
-        from requested wanted, ${record} r
-        where q.id = wanted.id
-          and q.outcome = 'failed'
-          and r.id = q.record_id
-          and r.content_version = q.content_version
-          and r.embedding is null
-        returning q.id
-      )
-      select count(*)::text as retried from reset
+      select ${sql(schema)}.retry_embedding_failures
+      ( ${sql.array([...parsed.queueIds], POSTGRES_TEXT_OID)}::text[]::pg_catalog.int8[]
+      )::text as retried
     `,
     {
       spanName: "retryEmbeddingFailures",
-      dbOperationName: "UPDATE",
+      dbOperationName: "SELECT",
       namespace: schema,
     },
   );
@@ -557,12 +412,11 @@ function parseQueueOptions<T>(
   });
 }
 
-/** Aggregate queue snapshot for operational visibility. */
+/** Aggregate queue snapshot for operational visibility via `<schema>.embedding_queue_stats`. */
 export async function queueStats(
   sql: postgres.ISql,
   schema: string,
 ): Promise<QueueStats> {
-  const queue = sql`${sql(schema)}.embedding_queue`;
   const [row] = await runSql(
     sql<
       {
@@ -574,21 +428,12 @@ export async function queueStats(
       }[]
     >`
       select
-        count(*) filter (where outcome is null)::text as pending
-      , count(*) filter (where outcome is null and visible_at > now())::text as in_flight
-      , count(*) filter (where outcome is null and visible_at <= now())::text as waiting
-      , count(*) filter (
-          where q.outcome = 'failed'
-            and exists (
-              select 1
-              from ${sql`${sql(schema)}.record`} r
-              where r.id = q.record_id
-                and r.content_version = q.content_version
-                and r.embedding is null
-            )
-        )::text as failed
-      , min(created_at) filter (where outcome is null) as oldest_pending_at
-      from ${queue} q
+        pending::text as pending
+      , in_flight::text as in_flight
+      , waiting::text as waiting
+      , failed::text as failed
+      , oldest_pending_at
+      from ${sql(schema)}.embedding_queue_stats()
     `,
     {
       spanName: "embeddingQueueStats",

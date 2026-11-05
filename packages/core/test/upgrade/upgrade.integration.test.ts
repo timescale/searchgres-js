@@ -498,7 +498,7 @@ test("direct, sequential, and skipped-version upgrades with trigger-aware backfi
 
   const step2IdempotentProbeV1: Migration = defineMigration(
     "idempotent",
-    "idempotent/005_probe.sql",
+    "idempotent/999_probe.sql",
     `
       create or replace function {{schema_ident}}.migration_probe(_x integer)
       returns integer
@@ -520,7 +520,7 @@ test("direct, sequential, and skipped-version upgrades with trigger-aware backfi
   );
   const step3IdempotentProbeV2: Migration = defineMigration(
     "idempotent",
-    "idempotent/005_probe.sql",
+    "idempotent/999_probe.sql",
     `
       create or replace function {{schema_ident}}.migration_probe
       ( _label text
@@ -1086,7 +1086,7 @@ test("enforces strict schema ownership (with SET ROLE support for NOLOGIN owners
     );
     const sigIdempotentV2: Migration = defineMigration(
       "idempotent",
-      "idempotent/005_sig_probe.sql",
+      "idempotent/999_sig_probe.sql",
       `
         create or replace function {{schema_ident}}.sig_probe
         ( _prefix text

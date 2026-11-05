@@ -19,6 +19,9 @@ import idempotent003Tree from "./sql/idempotent/003_tree.sql" with {
 import idempotent004Search from "./sql/idempotent/004_search.sql" with {
   type: "text",
 };
+import idempotent005EmbeddingQueue from "./sql/idempotent/005_embedding_queue.sql" with {
+  type: "text",
+};
 import incremental001Initial from "./sql/incremental/001_initial.sql" with {
   type: "text",
 };
@@ -108,6 +111,11 @@ export const idempotentMigrations: readonly Migration[] = sortByName([
     "idempotent",
     "idempotent/004_search.sql",
     idempotent004Search,
+  ),
+  defineMigration(
+    "idempotent",
+    "idempotent/005_embedding_queue.sql",
+    idempotent005EmbeddingQueue,
   ),
 ]);
 
