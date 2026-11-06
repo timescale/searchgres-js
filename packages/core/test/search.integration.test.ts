@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { Sql } from "postgres";
+import type { IndexConfig } from "../src/config.ts";
 import { createIndex } from "../src/create-index.ts";
+import { ensureExtensions } from "../src/db/extensions.ts";
 import { InvalidInputError } from "../src/errors.ts";
 import { type Index, openIndex } from "../src/open-index.ts";
 import { truncateCharacters } from "../src/truncate.ts";
@@ -21,11 +23,17 @@ after(async () => {
 
 async function withIndex(
   fn: (index: Index) => Promise<void>,
-  options?: { embedding?: ReturnType<typeof mockEmbeddingModel> },
+  options?: {
+    embedding?: ReturnType<typeof mockEmbeddingModel>;
+    config?: IndexConfig;
+  },
 ): Promise<void> {
   const schema = randomTestSchema();
   try {
-    await createIndex(sql, schema, { dimensions: 4 });
+    if (options?.config?.vectorIndex?.method === "prism") {
+      await ensureExtensions(sql, { vectorIndex: "prism" });
+    }
+    await createIndex(sql, schema, options?.config ?? { dimensions: 4 });
     const index = await openIndex(sql, schema, {
       embedding: options?.embedding ?? mockEmbeddingModel({}),
     });
@@ -348,6 +356,63 @@ test("parameterized semantic and keyword query shapes retain HNSW and BM25 index
       );
     });
   });
+
+  await withIndex(
+    async (prismIndex) => {
+      await prismIndex.upsertMany([
+        {
+          content: "dragonfruit semantic target",
+          tree: "docs",
+          embedding: [1, 0, 0, 0],
+        },
+        {
+          content: "dragonfruit second target",
+          tree: "docs",
+          embedding: [0.9, 0.1, 0, 0],
+        },
+        {
+          content: "unrelated",
+          tree: "docs",
+          embedding: [0, 1, 0, 0],
+        },
+      ]);
+
+      const semanticHits = await prismIndex.search({
+        vector: [1, 0, 0, 0],
+        limit: 2,
+      });
+      assert.equal(semanticHits.length, 2);
+      assert.equal(semanticHits[0]?.content, "dragonfruit semantic target");
+
+      const hybridHits = await prismIndex.search({
+        fulltext: "dragonfruit",
+        vector: [1, 0, 0, 0],
+        limit: 2,
+      });
+      assert.equal(hybridHits.length, 2);
+      assert.equal(hybridHits[0]?.content, "dragonfruit semantic target");
+
+      await sql.begin(async (tx) => {
+        await tx`set local enable_seqscan = off`;
+        const prismPlan = await tx<{ readonly "QUERY PLAN": unknown }[]>`
+          explain (format json)
+          select m.id
+          from ${tx(prismIndex.schema)}.record m
+          where m.embedding is not null
+          order by m.embedding operator(public.<=>) ${"[1,0,0,0]"}::public.halfvec, m.id
+          limit 30
+        `;
+        assert.ok(
+          planUsesIndex(
+            prismPlan[0]?.["QUERY PLAN"],
+            "record_embedding_prism_idx",
+          ),
+          "expected the parameterized semantic query to use the PRISM index",
+        );
+      });
+    },
+    { config: { dimensions: 4, vectorIndex: { method: "prism" } } },
+  );
 });
 
 test("keyword search explicit limit overrides pg_textsearch.default_limit", async () => {

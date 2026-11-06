@@ -31,4 +31,17 @@ test("configured index shape reports configured and actual storage", () => {
   ).toThrow(
     'Index "docs" does not match the config: configured halfvec(768), database has vector(1536)',
   );
+  expect(() =>
+    assertConfiguredIndexShape(
+      {
+        schema: "docs",
+        dimensions: 768,
+        vectorType: "halfvec",
+        vectorIndex: "prism",
+      },
+      { ...configured, vectorIndex: "hnsw" },
+    ),
+  ).toThrow(
+    'Index "docs" does not match the config: configured halfvec(768), database has halfvec(768) (hnsw vs prism)',
+  );
 });

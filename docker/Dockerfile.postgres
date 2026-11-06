@@ -1,25 +1,51 @@
 # PostgreSQL 18 for searchgres development and testing.
 #
-# Bundles the three extensions searchgres requires:
-#   - pgvector      vector / halfvec columns + HNSW index   (from the base image)
-#   - pg_textsearch BM25 index and ranking                  (release .deb)
-#   - ltree         hierarchical paths                      (ships with Postgres)
+# Bundles the extensions searchgres uses:
+#   - pgvector        vector / halfvec columns + HNSW index   (from the base image)
+#   - pg_textsearch   BM25 index and ranking                  (release .deb)
+#   - pg_vectorsearch PRISM vector index                      (built from release tarball)
+#   - ltree           hierarchical paths                      (ships with Postgres)
 #
 # Build for the host architecture:
 #   docker build -t searchgres-postgres -f docker/Dockerfile.postgres docker/
-#
-# pg_textsearch publishes PostgreSQL- and architecture-specific Debian packages
-# for both amd64 and arm64. Download the matching release archive rather than
-# compiling the extension in this image.
 
 ARG PG_MAJOR=18
 ARG PGVECTOR_VERSION=0.8.6
 ARG PG_TEXTSEARCH_VERSION=1.4.0
+ARG PG_VECTORSEARCH_VERSION=0.1.0
+ARG PG_VECTORSEARCH_SHA256=2224512b1fc591e9d9d80744ecce76561e715d9846dc8b09874e887dfc7827f4
+
+FROM docker.io/pgvector/pgvector:${PGVECTOR_VERSION}-pg${PG_MAJOR}-trixie AS pg-vectorsearch-build
+ARG PG_MAJOR
+ARG PG_VECTORSEARCH_VERSION
+ARG PG_VECTORSEARCH_SHA256
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      curl \
+      meson \
+      ninja-build \
+      pkg-config \
+      postgresql-server-dev-${PG_MAJOR} \
+ && curl -fsSL -o /tmp/pg_vectorsearch.tar.gz \
+      "https://github.com/timescale/pg_vectorsearch/releases/download/v${PG_VECTORSEARCH_VERSION}/pg_vectorsearch-${PG_VECTORSEARCH_VERSION}.tar.gz" \
+ && echo "${PG_VECTORSEARCH_SHA256}  /tmp/pg_vectorsearch.tar.gz" | sha256sum -c - \
+ && mkdir -p /tmp/pg_vectorsearch \
+ && tar -xzf /tmp/pg_vectorsearch.tar.gz -C /tmp/pg_vectorsearch --strip-components=1 \
+ && meson setup /tmp/pg_vectorsearch/builddir /tmp/pg_vectorsearch \
+      --buildtype=release \
+      -Dpostgresql=enabled \
+      -Dtools=disabled \
+      -Dtap_tests=disabled \
+      -Dblas=disabled \
+ && DESTDIR=/tmp/pg-vectorsearch-root meson install -C /tmp/pg_vectorsearch/builddir
 
 FROM docker.io/pgvector/pgvector:${PGVECTOR_VERSION}-pg${PG_MAJOR}-trixie
 ARG PG_MAJOR
 ARG PG_TEXTSEARCH_VERSION
 ARG TARGETARCH
+COPY --from=pg-vectorsearch-build /tmp/pg-vectorsearch-root/ /
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl unzip \
  && curl -fsSL -o /tmp/pg-textsearch.zip \

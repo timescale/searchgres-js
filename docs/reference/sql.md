@@ -158,6 +158,9 @@ select docs_index.pending_embedding_count();
 select * from docs_index.list_embedding_failures(100, null);
 select docs_index.retry_embedding_failures(array[1]::bigint[]);
 select docs_index.prune_embedding_queue(interval '7 days');
+
+-- inspect vector index size and (for prism) cluster health
+select * from docs_index.vector_index_stats();
 ```
 
 The library's `processEmbeddings()` and `startEmbeddingWorker()` orchestrate

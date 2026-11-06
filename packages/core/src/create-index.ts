@@ -1,7 +1,11 @@
 import type postgres from "postgres";
 import { type IndexConfig, normalizeIndexConfig } from "./config.ts";
 import { bootstrapMigrations, executeMigrations } from "./db/definitions.ts";
-import { getExtensionInfo, REQUIRED_EXTENSIONS } from "./db/extensions.ts";
+import {
+  assertPrismPgvectorCompat,
+  extensionsForVectorIndex,
+  getExtensionInfo,
+} from "./db/extensions.ts";
 import { acquireAdvisoryLock, advisoryLockKey } from "./db/lock.ts";
 import { ensurePostgresVersion } from "./db/preflight.ts";
 import {
@@ -101,8 +105,13 @@ async function createIndexSchema(
 
     // searchgres is public-only: every required extension must be installed in
     // `public` (via `ensureExtensions` or administrative setup).
-    for (const requirement of REQUIRED_EXTENSIONS) {
+    for (const requirement of extensionsForVectorIndex(
+      creation.vectorIndex.method,
+    )) {
       await getExtensionInfo(tx, requirement);
+    }
+    if (creation.vectorIndex.method === "prism") {
+      await assertPrismPgvectorCompat(tx, creation.vectorType);
     }
 
     // ------------------------------------------------------------------------

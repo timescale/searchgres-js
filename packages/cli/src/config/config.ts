@@ -62,10 +62,17 @@ export const runtimeConfigSchema = z.strictObject({
       schema: z.string().min(1),
       dimensions: z.number().int().positive(),
       vectorType: z.enum(["vector", "halfvec"]),
+      vectorIndex: z.enum(["hnsw", "prism"]).prefault("hnsw"),
     })
     .refine(
-      (i) => i.dimensions <= (i.vectorType === "vector" ? 2000 : 4000),
-      "dimensions exceed HNSW storage limit",
+      (i) =>
+        i.dimensions <=
+        (i.vectorIndex === "prism"
+          ? 1968
+          : i.vectorType === "vector"
+            ? 2000
+            : 4000),
+      "dimensions exceed vector index storage limit",
     ),
   embedding: z
     .strictObject({

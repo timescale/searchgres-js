@@ -64,6 +64,7 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
       .option("--embedding-model <model>", "OpenAI-compatible model")
       .option("--dimensions <n>", "vector dimensions")
       .option("--vector-type <type>", "vector or halfvec")
+      .option("--vector-index <method>", "hnsw or prism")
       .option("--api-key-env <name>", "provider key environment variable")
       .option("--base-url <url>", "OpenAI-compatible API root")
       .option("--base-url-env <name>", "API root environment variable")
@@ -152,6 +153,23 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
       .requiredOption("--older-than <duration>", "retention window")
       .option("--yes", "confirm pruning"),
     "embeddings prune",
+  );
+
+  const vectorIndex = program
+    .command("vector-index")
+    .description("inspect and rebuild the vector index");
+  action(
+    vectorIndex
+      .command("stats")
+      .description("show vector index shape, size, and cluster health"),
+    "vector-index stats",
+  );
+  action(
+    vectorIndex
+      .command("reindex")
+      .description("rebuild the vector index")
+      .option("--concurrently", "run REINDEX INDEX CONCURRENTLY"),
+    "vector-index reindex",
   );
 
   const create = program

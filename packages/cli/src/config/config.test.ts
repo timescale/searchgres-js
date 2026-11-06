@@ -15,6 +15,13 @@ const minimal = {
 };
 test("runtime config defaults, local auth, and exact tokenizer variants", () => {
   const config = parseRuntimeConfig(minimal);
+  expect(config.index.vectorIndex).toBe("hnsw");
+  expect(
+    parseRuntimeConfig({
+      ...minimal,
+      index: { ...minimal.index, vectorIndex: "prism" },
+    }).index.vectorIndex,
+  ).toBe("prism");
   expect(config.worker.count).toBe(1);
   expect(config.database.pool.max).toBe(10);
   expect(config.embedding.apiKeyEnv).toBeUndefined();
@@ -58,6 +65,10 @@ test("strict configuration rejects removed and conflicting options", () => {
       },
     },
     { ...minimal, index: { ...minimal.index, dimensions: 4001 } },
+    {
+      ...minimal,
+      index: { ...minimal.index, vectorIndex: "prism", dimensions: 1969 },
+    },
   ])
     expect(() => parseRuntimeConfig(value)).toThrow();
 });

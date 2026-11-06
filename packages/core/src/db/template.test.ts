@@ -143,4 +143,28 @@ test("provisioning context validates the schema, shape and catalog literal", () 
   assert.throws(() =>
     migrationSqlContext("docs", { vectorType: "vector", dimensions: 2001 }),
   );
+
+  const prismContext = indexSqlContext(
+    "docs",
+    {
+      dimensions: 4,
+      vectorType: "halfvec",
+      vectorIndex: { method: "prism", nlist: 32, targetPages: 4 },
+    },
+    "'english'",
+  );
+  assert.equal(
+    renderSql(
+      "create index {{vector_index_ident}} on {{schema_ident}}.record using {{vector_index_am_ident}} (embedding public.{{cosine_opclass_ident}}){{vector_index_with_clause}};",
+      prismContext.variables,
+    ),
+    'create index "record_embedding_prism_idx" on "docs".record using "prism" (embedding public."vec16_cosine_ops")\nwith\n( nlist = 32\n, target_pages = 4\n);',
+  );
+  assert.throws(() =>
+    migrationSqlContext("docs", {
+      vectorType: "halfvec",
+      dimensions: 1969,
+      vectorIndex: "prism",
+    }),
+  );
 });

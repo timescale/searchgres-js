@@ -48,10 +48,11 @@ export async function provision(
       }
     }
     try {
-      await ensureExtensions(sql);
+      await ensureExtensions(sql, { vectorIndex: config.index.vectorIndex });
       await createIndex(sql, config.index.schema, {
         dimensions: config.index.dimensions,
         vectorType: config.index.vectorType,
+        vectorIndex: { method: config.index.vectorIndex },
       });
     } catch (error) {
       if (!flags.has("if-not-exists") || !hasSqlState(error, "42P06"))
@@ -157,6 +158,9 @@ export async function generateConfig(flags: Flags): Promise<void> {
       schema: required("schema"),
       dimensions: Number(required("dimensions")),
       vectorType: values.get("vector-type") ?? "halfvec",
+      ...(values.has("vector-index")
+        ? { vectorIndex: values.get("vector-index") }
+        : {}),
     },
     embedding: {
       provider: "openai-compatible",

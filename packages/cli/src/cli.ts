@@ -59,6 +59,15 @@ export async function runCommand(
       switch (command) {
         case "info":
           return output(await runtime.info(), flags);
+        case "vector-index stats":
+          return output(await client.vectorIndexStats(), flags);
+        case "vector-index reindex":
+          return output(
+            await client.reindexVectorIndex({
+              concurrently: flags.has("concurrently"),
+            }),
+            flags,
+          );
         case "create":
           return runCreate(client, flags);
         case "get":

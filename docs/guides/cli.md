@@ -33,6 +33,7 @@ index:
   schema: docs
   dimensions: 1536
   vectorType: halfvec
+  vectorIndex: hnsw
 embedding:
   provider: openai-compatible
   model: text-embedding-3-small
@@ -96,6 +97,8 @@ searchgres init
 searchgres init --if-not-exists
 searchgres migrate
 searchgres info
+searchgres vector-index stats
+searchgres vector-index reindex --concurrently
 searchgres destroy --yes
 ```
 

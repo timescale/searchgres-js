@@ -1,5 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
+import type { VectorIndexMethod } from "./config.ts";
+import { vectorIndexNameForMethod } from "./db/template.ts";
 import {
   ConflictError,
   DimensionMismatchError,
@@ -78,6 +80,61 @@ const patchSchema = z
 
 /** Fields a {@link Index.patch} may change. Omit a key to leave it unchanged. */
 export type PatchInput = z.input<typeof patchSchema>;
+
+export type PrismReindexReason = "bootstrap_single_cluster" | "cluster_drift";
+
+export interface PrismIndexStats {
+  readonly nlist: number;
+  readonly idealNlist: number;
+  readonly targetPages: number;
+  readonly targetEntries: number;
+  readonly nlevels: number;
+  readonly postingPages: number;
+  readonly needsReindex: boolean;
+  readonly reindexReason: PrismReindexReason | null;
+}
+
+export interface VectorIndexStats {
+  readonly method: VectorIndexMethod;
+  readonly indexName: string;
+  readonly indexSizeBytes: number;
+  readonly embeddedRecords: number;
+  readonly prism: PrismIndexStats | null;
+}
+
+export interface ReindexVectorIndexOptions {
+  /**
+   * When `true`, runs `REINDEX INDEX CONCURRENTLY` outside a transaction block
+   * so reads and writes on the table are not blocked during the rebuild.
+   * Default: `false`.
+   */
+  readonly concurrently?: boolean;
+  /** Optional lock wait budget in milliseconds (`0` disables). */
+  readonly lockTimeoutMs?: number;
+  /** Optional statement timeout in milliseconds (`0` disables). */
+  readonly statementTimeoutMs?: number;
+}
+
+interface VectorIndexStatsRow {
+  readonly method: VectorIndexMethod;
+  readonly index_name: string;
+  readonly index_size_bytes: string;
+  readonly embedded_records: string;
+  readonly prism_nlist: number | null;
+  readonly prism_ideal_nlist: number | null;
+  readonly prism_target_pages: number | null;
+  readonly prism_target_entries: number | null;
+  readonly prism_nlevels: number | null;
+  readonly prism_posting_pages: string | null;
+  readonly prism_needs_reindex: boolean | null;
+  readonly prism_reindex_reason: PrismReindexReason | null;
+}
+
+const reindexOptionsSchema = z.strictObject({
+  concurrently: z.boolean().optional(),
+  lockTimeoutMs: z.int().nonnegative().optional(),
+  statementTimeoutMs: z.int().nonnegative().optional(),
+});
 
 export async function get(index: Index, id: string): Promise<StoredRecord> {
   const recordId = parseId(id);
@@ -264,6 +321,218 @@ function parseId(id: string): string {
     );
   }
   return result.data;
+}
+
+export async function vectorIndexStats(
+  index: Index,
+): Promise<VectorIndexStats> {
+  const { sql } = index;
+  const [row] = await runSql(
+    sql<VectorIndexStatsRow[]>`
+      select
+        method
+      , index_name
+      , index_size_bytes::text as index_size_bytes
+      , embedded_records::text as embedded_records
+      , prism_nlist
+      , prism_ideal_nlist
+      , prism_target_pages
+      , prism_target_entries
+      , prism_nlevels
+      , prism_posting_pages::text as prism_posting_pages
+      , prism_needs_reindex
+      , prism_reindex_reason
+      from ${sql(index.schema)}.vector_index_stats()
+    `,
+    {
+      spanName: "vectorIndexStats",
+      dbOperationName: "SELECT",
+      namespace: index.schema,
+    },
+  );
+  if (!row) {
+    throw new Error("vector_index_stats returned no rows");
+  }
+  const prism: PrismIndexStats | null =
+    row.method === "prism" &&
+    row.prism_nlist !== null &&
+    row.prism_ideal_nlist !== null &&
+    row.prism_target_pages !== null &&
+    row.prism_target_entries !== null &&
+    row.prism_nlevels !== null &&
+    row.prism_posting_pages !== null &&
+    row.prism_needs_reindex !== null
+      ? Object.freeze({
+          nlist: row.prism_nlist,
+          idealNlist: row.prism_ideal_nlist,
+          targetPages: row.prism_target_pages,
+          targetEntries: row.prism_target_entries,
+          nlevels: row.prism_nlevels,
+          postingPages: Number(row.prism_posting_pages),
+          needsReindex: row.prism_needs_reindex,
+          reindexReason: row.prism_reindex_reason,
+        })
+      : null;
+
+  return Object.freeze({
+    method: row.method,
+    indexName: row.index_name,
+    indexSizeBytes: Number(row.index_size_bytes),
+    embeddedRecords: Number(row.embedded_records),
+    prism,
+  });
+}
+
+export async function reindexVectorIndex(
+  index: Index,
+  options?: ReindexVectorIndexOptions,
+): Promise<VectorIndexStats> {
+  const parsed = reindexOptionsSchema.safeParse(options ?? {});
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map(toValidationIssue);
+    const first = issues[0];
+    const detail = first
+      ? `${first.path.join(".") || "options"}: ${first.message}`
+      : "validation failed";
+    throw new InvalidInputError(
+      `Invalid reindexVectorIndex options: ${detail}`,
+      {
+        cause: parsed.error,
+        issues,
+      },
+    );
+  }
+  const {
+    concurrently = false,
+    lockTimeoutMs,
+    statementTimeoutMs,
+  } = parsed.data;
+  const indexName = vectorIndexNameForMethod(index.vectorIndex);
+  const { sql } = index;
+
+  if (concurrently) {
+    if (
+      "savepoint" in sql ||
+      typeof (sql as postgres.Sql).reserve !== "function"
+    ) {
+      throw new InvalidInputError(
+        "Cannot run REINDEX INDEX CONCURRENTLY inside a transaction",
+      );
+    }
+    if (lockTimeoutMs === undefined && statementTimeoutMs === undefined) {
+      await runSql(
+        sql`reindex index concurrently ${sql(index.schema)}.${sql(indexName)}`,
+        {
+          spanName: "reindexVectorIndex",
+          dbOperationName: "REINDEX",
+          namespace: index.schema,
+        },
+      );
+    } else {
+      const reserved = await (sql as postgres.Sql).reserve();
+      try {
+        if (lockTimeoutMs !== undefined) {
+          await runSql(
+            reserved`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, false)`,
+            {
+              spanName: "setLockTimeout",
+              dbOperationName: "SET",
+              namespace: index.schema,
+            },
+          );
+        }
+        if (statementTimeoutMs !== undefined) {
+          await runSql(
+            reserved`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, false)`,
+            {
+              spanName: "setStatementTimeout",
+              dbOperationName: "SET",
+              namespace: index.schema,
+            },
+          );
+        }
+        await runSql(
+          reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
+          {
+            spanName: "reindexVectorIndex",
+            dbOperationName: "REINDEX",
+            namespace: index.schema,
+          },
+        );
+      } finally {
+        try {
+          if (lockTimeoutMs !== undefined) {
+            await reserved`reset lock_timeout`;
+          }
+          if (statementTimeoutMs !== undefined) {
+            await reserved`reset statement_timeout`;
+          }
+        } finally {
+          reserved.release();
+        }
+      }
+    }
+  } else if (
+    (lockTimeoutMs !== undefined || statementTimeoutMs !== undefined) &&
+    !("savepoint" in sql) &&
+    typeof (sql as postgres.Sql).begin === "function"
+  ) {
+    await (sql as postgres.Sql).begin(async (tx) => {
+      if (lockTimeoutMs !== undefined) {
+        await runSql(
+          tx`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true)`,
+          {
+            spanName: "setLockTimeout",
+            dbOperationName: "SET",
+            namespace: index.schema,
+          },
+        );
+      }
+      if (statementTimeoutMs !== undefined) {
+        await runSql(
+          tx`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true)`,
+          {
+            spanName: "setStatementTimeout",
+            dbOperationName: "SET",
+            namespace: index.schema,
+          },
+        );
+      }
+      await runSql(tx`reindex index ${tx(index.schema)}.${tx(indexName)}`, {
+        spanName: "reindexVectorIndex",
+        dbOperationName: "REINDEX",
+        namespace: index.schema,
+      });
+    });
+  } else {
+    if (lockTimeoutMs !== undefined) {
+      await runSql(
+        sql`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true)`,
+        {
+          spanName: "setLockTimeout",
+          dbOperationName: "SET",
+          namespace: index.schema,
+        },
+      );
+    }
+    if (statementTimeoutMs !== undefined) {
+      await runSql(
+        sql`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true)`,
+        {
+          spanName: "setStatementTimeout",
+          dbOperationName: "SET",
+          namespace: index.schema,
+        },
+      );
+    }
+    await runSql(sql`reindex index ${sql(index.schema)}.${sql(indexName)}`, {
+      spanName: "reindexVectorIndex",
+      dbOperationName: "REINDEX",
+      namespace: index.schema,
+    });
+  }
+
+  return vectorIndexStats(index);
 }
 
 function throwInvalidInput(error: z.ZodError): never {
