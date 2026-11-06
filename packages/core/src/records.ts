@@ -85,6 +85,7 @@ export type PrismReindexReason = "bootstrap_single_cluster" | "cluster_drift";
 
 export interface PrismIndexStats {
   readonly nlist: number;
+  readonly pinnedNlist: number | null;
   readonly idealNlist: number;
   readonly targetPages: number;
   readonly targetEntries: number;
@@ -109,6 +110,12 @@ export interface ReindexVectorIndexOptions {
    * Default: `false`.
    */
   readonly concurrently?: boolean;
+  /**
+   * For `prism` indexes: pin `nlist` to a positive integer (`ALTER INDEX ... SET (nlist = N)`)
+   * or unpin it back to automatic optimal sizing (`"auto"` -> `ALTER INDEX ... RESET (nlist)`)
+   * before rebuilding.
+   */
+  readonly nlist?: number | "auto";
   /** Optional lock wait budget in milliseconds (`0` disables). */
   readonly lockTimeoutMs?: number;
   /** Optional statement timeout in milliseconds (`0` disables). */
@@ -121,6 +128,7 @@ interface VectorIndexStatsRow {
   readonly index_size_bytes: string;
   readonly embedded_records: string;
   readonly prism_nlist: number | null;
+  readonly prism_pinned_nlist: number | null;
   readonly prism_ideal_nlist: number | null;
   readonly prism_target_pages: number | null;
   readonly prism_target_entries: number | null;
@@ -132,6 +140,7 @@ interface VectorIndexStatsRow {
 
 const reindexOptionsSchema = z.strictObject({
   concurrently: z.boolean().optional(),
+  nlist: z.union([z.int().min(1).max(2_000_000), z.literal("auto")]).optional(),
   lockTimeoutMs: z.int().nonnegative().optional(),
   statementTimeoutMs: z.int().nonnegative().optional(),
 });
@@ -335,6 +344,7 @@ export async function vectorIndexStats(
       , index_size_bytes::text as index_size_bytes
       , embedded_records::text as embedded_records
       , prism_nlist
+      , prism_pinned_nlist
       , prism_ideal_nlist
       , prism_target_pages
       , prism_target_entries
@@ -364,6 +374,7 @@ export async function vectorIndexStats(
     row.prism_needs_reindex !== null
       ? Object.freeze({
           nlist: row.prism_nlist,
+          pinnedNlist: row.prism_pinned_nlist,
           idealNlist: row.prism_ideal_nlist,
           targetPages: row.prism_target_pages,
           targetEntries: row.prism_target_entries,
@@ -381,6 +392,34 @@ export async function vectorIndexStats(
     embeddedRecords: Number(row.embedded_records),
     prism,
   });
+}
+
+async function applyPrismNlistOption(
+  sql: postgres.ISql,
+  schema: string,
+  indexName: string,
+  nlist: number | "auto" | undefined,
+): Promise<void> {
+  if (nlist === undefined) return;
+  if (nlist === "auto") {
+    await runSql(
+      sql`alter index ${sql(schema)}.${sql(indexName)} reset (nlist)`,
+      {
+        spanName: "alterVectorIndexNlist",
+        dbOperationName: "ALTER",
+        namespace: schema,
+      },
+    );
+  } else {
+    await runSql(
+      sql`alter index ${sql(schema)}.${sql(indexName)} set (nlist = ${sql.unsafe(String(nlist))})`,
+      {
+        spanName: "alterVectorIndexNlist",
+        dbOperationName: "ALTER",
+        namespace: schema,
+      },
+    );
+  }
 }
 
 export async function reindexVectorIndex(
@@ -404,9 +443,24 @@ export async function reindexVectorIndex(
   }
   const {
     concurrently = false,
+    nlist,
     lockTimeoutMs,
     statementTimeoutMs,
   } = parsed.data;
+  if (nlist !== undefined && index.vectorIndex !== "prism") {
+    throw new InvalidInputError(
+      "Invalid reindexVectorIndex options: nlist is only supported for prism vector indexes",
+      {
+        issues: [
+          {
+            code: "custom",
+            message: "nlist is only supported for prism vector indexes",
+            path: ["nlist"],
+          },
+        ],
+      },
+    );
+  }
   const indexName = vectorIndexNameForMethod(index.vectorIndex);
   const { sql } = index;
 
@@ -420,6 +474,7 @@ export async function reindexVectorIndex(
       );
     }
     if (lockTimeoutMs === undefined && statementTimeoutMs === undefined) {
+      await applyPrismNlistOption(sql, index.schema, indexName, nlist);
       await runSql(
         sql`reindex index concurrently ${sql(index.schema)}.${sql(indexName)}`,
         {
@@ -430,7 +485,28 @@ export async function reindexVectorIndex(
       );
     } else {
       const reserved = await (sql as postgres.Sql).reserve();
+      let priorLockTimeout: string | undefined;
+      let priorStatementTimeout: string | undefined;
       try {
+        const [prior] = await runSql(
+          reserved<
+            {
+              readonly lock_timeout: string;
+              readonly statement_timeout: string;
+            }[]
+          >`
+            select
+              pg_catalog.current_setting('lock_timeout') as lock_timeout
+            , pg_catalog.current_setting('statement_timeout') as statement_timeout
+          `,
+          {
+            spanName: "readSessionTimeouts",
+            dbOperationName: "SELECT",
+            namespace: index.schema,
+          },
+        );
+        priorLockTimeout = prior?.lock_timeout;
+        priorStatementTimeout = prior?.statement_timeout;
         if (lockTimeoutMs !== undefined) {
           await runSql(
             reserved`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, false)`,
@@ -451,6 +527,7 @@ export async function reindexVectorIndex(
             },
           );
         }
+        await applyPrismNlistOption(reserved, index.schema, indexName, nlist);
         await runSql(
           reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
           {
@@ -461,11 +538,14 @@ export async function reindexVectorIndex(
         );
       } finally {
         try {
-          if (lockTimeoutMs !== undefined) {
-            await reserved`reset lock_timeout`;
+          if (lockTimeoutMs !== undefined && priorLockTimeout !== undefined) {
+            await reserved`select pg_catalog.set_config('lock_timeout', ${priorLockTimeout}, false)`;
           }
-          if (statementTimeoutMs !== undefined) {
-            await reserved`reset statement_timeout`;
+          if (
+            statementTimeoutMs !== undefined &&
+            priorStatementTimeout !== undefined
+          ) {
+            await reserved`select pg_catalog.set_config('statement_timeout', ${priorStatementTimeout}, false)`;
           }
         } finally {
           reserved.release();
@@ -473,7 +553,9 @@ export async function reindexVectorIndex(
       }
     }
   } else if (
-    (lockTimeoutMs !== undefined || statementTimeoutMs !== undefined) &&
+    (nlist !== undefined ||
+      lockTimeoutMs !== undefined ||
+      statementTimeoutMs !== undefined) &&
     !("savepoint" in sql) &&
     typeof (sql as postgres.Sql).begin === "function"
   ) {
@@ -498,6 +580,7 @@ export async function reindexVectorIndex(
           },
         );
       }
+      await applyPrismNlistOption(tx, index.schema, indexName, nlist);
       await runSql(tx`reindex index ${tx(index.schema)}.${tx(indexName)}`, {
         spanName: "reindexVectorIndex",
         dbOperationName: "REINDEX",
@@ -525,6 +608,7 @@ export async function reindexVectorIndex(
         },
       );
     }
+    await applyPrismNlistOption(sql, index.schema, indexName, nlist);
     await runSql(sql`reindex index ${sql(index.schema)}.${sql(indexName)}`, {
       spanName: "reindexVectorIndex",
       dbOperationName: "REINDEX",

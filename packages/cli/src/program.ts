@@ -168,7 +168,8 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
     vectorIndex
       .command("reindex")
       .description("rebuild the vector index")
-      .option("--concurrently", "run REINDEX INDEX CONCURRENTLY"),
+      .option("--concurrently", "run REINDEX INDEX CONCURRENTLY")
+      .option("--nlist <n|auto>", "pin prism nlist or reset to auto"),
     "vector-index reindex",
   );
 

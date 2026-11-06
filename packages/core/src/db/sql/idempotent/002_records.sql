@@ -551,6 +551,7 @@ returns table
 , index_size_bytes bigint
 , embedded_records bigint
 , prism_nlist integer
+, prism_pinned_nlist integer
 , prism_ideal_nlist integer
 , prism_target_pages integer
 , prism_target_entries integer
@@ -568,6 +569,7 @@ declare
   _size_bytes bigint;
   _embedded bigint;
   _nlist integer;
+  _pinned_nlist integer;
   _target_pages integer;
   _target_entries integer;
   _nlevels integer;
@@ -576,6 +578,7 @@ declare
   _linear integer;
   _min_lists integer;
   _ideal_nlist integer;
+  _effective_target_nlist integer;
   _needs_reindex boolean;
   _reason text;
 begin
@@ -584,11 +587,18 @@ begin
   , c.relname::text
   , am.amname::text
   , pg_catalog.pg_relation_size(c.oid)
+  , (
+      select substring(opt from '^nlist=([0-9]+)$')::integer
+      from pg_catalog.unnest(c.reloptions) opt
+      where opt like 'nlist=%'
+      limit 1
+    )
   into
     _index_oid
   , _index_name
   , _method
   , _size_bytes
+  , _pinned_nlist
   from pg_catalog.pg_class c
   inner join pg_catalog.pg_am am
     on am.oid = c.relam
@@ -618,10 +628,21 @@ begin
     _min_lists := trunc(sqrt(_count))::integer;
     _ideal_nlist := greatest(_linear, _min_lists, 1);
 
-    if _nlist = 1 and _ideal_nlist >= 2 then
+    if _pinned_nlist is not null and _pinned_nlist > 0 then
+      _effective_target_nlist := least(
+        _pinned_nlist,
+        greatest(least(_embedded, 2000000)::integer, 1)
+      );
+    else
+      _effective_target_nlist := _ideal_nlist;
+    end if;
+
+    if _nlist = 1 and _effective_target_nlist >= 2 then
       _needs_reindex := true;
       _reason := 'bootstrap_single_cluster';
-    elsif _embedded > (_nlist::bigint * _target_entries::bigint * 2) then
+    elsif _embedded > (_nlist::bigint * _target_entries::bigint * 2)
+      and _effective_target_nlist > _nlist
+    then
       _needs_reindex := true;
       _reason := 'cluster_drift';
     else
@@ -637,6 +658,7 @@ begin
   , _size_bytes
   , _embedded
   , _nlist
+  , _pinned_nlist
   , _ideal_nlist
   , _target_pages
   , _target_entries

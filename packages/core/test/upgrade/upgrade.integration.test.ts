@@ -135,7 +135,7 @@ test("adopts populated format-2 indexes across vector types, preserves data/queu
       dimensions: 4,
       vectorType,
       bm25: { textConfig: "simple", k1: 1.6, b: 0.4 },
-      hnsw: { m: 8, efConstruction: 32 },
+      vectorIndex: { method: "hnsw", m: 8, efConstruction: 32 },
     } as const;
     try {
       await createFormat2Index(sql, upgradedSchema, config);

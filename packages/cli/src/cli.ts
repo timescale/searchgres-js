@@ -61,13 +61,22 @@ export async function runCommand(
           return output(await runtime.info(), flags);
         case "vector-index stats":
           return output(await client.vectorIndexStats(), flags);
-        case "vector-index reindex":
+        case "vector-index reindex": {
+          const rawNlist = optionalFlag(flags, "nlist");
+          const nlist =
+            rawNlist === undefined
+              ? undefined
+              : rawNlist === "auto"
+                ? ("auto" as const)
+                : positiveInteger(rawNlist, "nlist");
           return output(
             await client.reindexVectorIndex({
               concurrently: flags.has("concurrently"),
+              ...(nlist === undefined ? {} : { nlist }),
             }),
             flags,
           );
+        }
         case "create":
           return runCreate(client, flags);
         case "get":
