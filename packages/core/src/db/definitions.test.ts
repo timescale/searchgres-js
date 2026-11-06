@@ -98,14 +98,16 @@ test("every SQL file in sql/ has one manifest entry and renders cleanly", async 
       await readFile(new URL(migration.file, directory), "utf8"),
     );
     for (const vectorType of ["vector", "halfvec"] as const) {
-      const context = indexSqlContext(
-        "sgtest_manifest",
-        { dimensions: 4, vectorType },
-        "'english'",
-      );
-      const rendered = renderSql(migration.sql, context.variables);
-      assert.ok(!rendered.includes("{{"), migration.file);
-      assert.ok(!rendered.includes("}}"), migration.file);
+      for (const method of ["hnsw", "prism"] as const) {
+        const context = indexSqlContext(
+          "sgtest_manifest",
+          { dimensions: 4, vectorType, vectorIndex: { method } },
+          "'english'",
+        );
+        const rendered = renderSql(migration.sql, context.variables);
+        assert.ok(!rendered.includes("{{"), migration.file);
+        assert.ok(!rendered.includes("}}"), migration.file);
+      }
     }
   }
 

@@ -26,10 +26,29 @@ embedding writes fail with a `DimensionMismatchError`.
 | `halfvec` (default) | 16-bit floats | Half the storage; often a small recall impact for normalized embeddings. Evaluate it with your model and corpus. |
 | `vector` | 32-bit floats | Use when evaluation shows you need full fp32 precision. |
 
-HNSW caps the dimensions per type: up to **4000** for `halfvec`, **2000** for
-`vector`.
+Dimension limits depend on the chosen vector index access method:
+- **HNSW (`pgvector`, default)**: up to **4000** for `halfvec`, **2000** for `vector`.
+- **PRISM (`pg_vectorsearch`)**: up to **1968** for both `halfvec` and `vector`.
 
 Both use cosine distance.
+
+### Vector index access method (`hnsw` vs `prism`)
+
+By default, `createIndex()` builds a `pgvector` HNSW index. You can instead select `pg_vectorsearch`'s `prism` index access method via `vectorIndex`:
+
+```ts
+await ensureExtensions(sql, { vectorIndex: "prism" });
+await createIndex(sql, "docs_index", {
+  dimensions: 1536,
+  vectorType: "halfvec",
+  vectorIndex: { method: "prism" },
+});
+```
+
+Keep three `prism` characteristics in mind:
+1. **Empty-table creation and reindexing**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single partition (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`) so `prism` partitions clusters from the loaded vectors. Use `await index.vectorIndexStats()` to check `prism.needsReindex` (`"bootstrap_single_cluster"` or `"cluster_drift"`).
+2. **Filtered vector search**: `hnsw` uses `hnsw.iterative_scan = 'strict_order'` to continue walking the graph when `WHERE` filters discard rows. `prism` sizes a fixed top-$k$ buffer up front and post-filters, so highly selective filters can return fewer than `limit` rows.
+3. **Dimension ceiling**: `prism` supports up to 1,968 dimensions for both `vector` and `halfvec`.
 
 ### Keyword and vector index tuning
 
@@ -40,8 +59,7 @@ Sensible defaults are applied; override them only if you have a reason.
 | `bm25.textConfig` | `"english"` | PostgreSQL text search configuration for BM25. |
 | `bm25.k1` | `1.2` | BM25 term-frequency saturation. |
 | `bm25.b` | `0.75` | BM25 length normalization. |
-| `hnsw.m` | `16` | HNSW graph connectivity. |
-| `hnsw.efConstruction` | `64` | HNSW build-time search width. |
+| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Vector index method (`"hnsw"` or `"prism"`) and build parameters (`m`/`efConstruction` for `hnsw`; optional `nlist`/`targetPages` for `prism`). Top-level `hnsw` is also accepted as shorthand when `vectorIndex` is omitted. |
 
 ## Create an index
 

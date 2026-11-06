@@ -6,6 +6,7 @@ import {
   createIndex,
   SCHEMA_FORMAT_VERSION,
 } from "../src/create-index.ts";
+import { ensureExtensions } from "../src/db/extensions.ts";
 import { acquireAdvisoryLock, advisoryLockKey } from "../src/db/lock.ts";
 import { INDEX_SCHEMA_COMMENT } from "../src/db/marker.ts";
 import { noEmbedding } from "../src/embedding.ts";
@@ -450,5 +451,112 @@ test("rolls back provisioning when BM25 text configuration is invalid", async ()
     assert.equal(await schemaExists(sql, schema), false);
   } finally {
     await dropTestSchema(sql, schema);
+  }
+});
+
+test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", async () => {
+  const hnswSchema = randomTestSchema();
+  const prismHalfvecSchema = randomTestSchema();
+  const prismVectorSchema = randomTestSchema();
+  try {
+    await ensureExtensions(sql, { vectorIndex: "prism" });
+
+    await createIndex(sql, hnswSchema, { dimensions: 4 });
+    const hnswIndex = await openIndex(sql, hnswSchema, {
+      embedding: noEmbedding,
+    });
+    assert.equal(hnswIndex.vectorIndex, "hnsw");
+    const hnswStats = await hnswIndex.vectorIndexStats();
+    assert.equal(hnswStats.method, "hnsw");
+    assert.equal(hnswStats.indexName, "record_embedding_hnsw_idx");
+    assert.equal(hnswStats.embeddedRecords, 0);
+    assert.equal(hnswStats.prism, null);
+
+    await createIndex(sql, prismHalfvecSchema, {
+      dimensions: 4,
+      vectorType: "halfvec",
+      vectorIndex: { method: "prism" },
+    });
+    assert.equal(
+      await indexOpclass(sql, prismHalfvecSchema, "record_embedding_prism_idx"),
+      "vec16_cosine_ops",
+    );
+    assert.deepEqual(
+      await indexReloptions(
+        sql,
+        prismHalfvecSchema,
+        "record_embedding_prism_idx",
+      ),
+      [],
+    );
+
+    const prismIndex = await openIndex(sql, prismHalfvecSchema, {
+      embedding: noEmbedding,
+    });
+    assert.equal(prismIndex.vectorIndex, "prism");
+
+    // Empty prism index starts at nlist = 1, idealNlist = 1, needsReindex = false.
+    const emptyStats = await prismIndex.vectorIndexStats();
+    assert.equal(emptyStats.method, "prism");
+    assert.equal(emptyStats.indexName, "record_embedding_prism_idx");
+    assert.equal(emptyStats.embeddedRecords, 0);
+    assert.equal(emptyStats.prism?.nlist, 1);
+    assert.equal(emptyStats.prism?.idealNlist, 1);
+    assert.equal(emptyStats.prism?.needsReindex, false);
+    assert.equal(emptyStats.prism?.reindexReason, null);
+
+    // Insert 4 embedded records (floor(sqrt(4)) = 2 >= 2 while nlist = 1) -> bootstrap_single_cluster.
+    await prismIndex.upsertMany([
+      { content: "one", tree: "docs", embedding: [1, 0, 0, 0] },
+      { content: "two", tree: "docs", embedding: [0, 1, 0, 0] },
+      { content: "three", tree: "docs", embedding: [0, 0, 1, 0] },
+      { content: "four", tree: "docs", embedding: [0, 0, 0, 1] },
+    ]);
+    const postIngestStats = await prismIndex.vectorIndexStats();
+    assert.equal(postIngestStats.embeddedRecords, 4);
+    assert.equal(postIngestStats.prism?.nlist, 1);
+    assert.equal(postIngestStats.prism?.idealNlist, 2);
+    assert.equal(postIngestStats.prism?.needsReindex, true);
+    assert.equal(
+      postIngestStats.prism?.reindexReason,
+      "bootstrap_single_cluster",
+    );
+
+    const reindexedStats = await prismIndex.reindexVectorIndex();
+    assert.equal(reindexedStats.embeddedRecords, 4);
+    assert.equal(reindexedStats.prism?.nlist, 2);
+    assert.equal(reindexedStats.prism?.needsReindex, false);
+    assert.equal(reindexedStats.prism?.reindexReason, null);
+
+    const concurrentStats = await prismIndex.reindexVectorIndex({
+      concurrently: true,
+      lockTimeoutMs: 5_000,
+      statementTimeoutMs: 30_000,
+    });
+    assert.equal(concurrentStats.prism?.nlist, 2);
+    assert.equal(concurrentStats.prism?.needsReindex, false);
+
+    // Custom prism reloptions on vector(4).
+    await createIndex(sql, prismVectorSchema, {
+      dimensions: 4,
+      vectorType: "vector",
+      vectorIndex: { method: "prism", nlist: 4, targetPages: 2 },
+    });
+    assert.equal(
+      await indexOpclass(sql, prismVectorSchema, "record_embedding_prism_idx"),
+      "vec32_cosine_ops",
+    );
+    assert.deepEqual(
+      await indexReloptions(
+        sql,
+        prismVectorSchema,
+        "record_embedding_prism_idx",
+      ),
+      ["nlist=4", "target_pages=2"],
+    );
+  } finally {
+    await dropTestSchema(sql, hnswSchema);
+    await dropTestSchema(sql, prismHalfvecSchema);
+    await dropTestSchema(sql, prismVectorSchema);
   }
 });

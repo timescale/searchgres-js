@@ -48,11 +48,7 @@ with
 , b = {{bm25_b_number}}
 );
 
-create index record_embedding_hnsw_idx on {{schema_ident}}.record using hnsw (embedding public.{{cosine_opclass_ident}})
-with
-( m = {{hnsw_m_int}}
-, ef_construction = {{hnsw_ef_construction_int}}
-);
+create index {{vector_index_ident}} on {{schema_ident}}.record using {{vector_index_am_ident}} (embedding public.{{cosine_opclass_ident}}){{vector_index_with_clause}};
 
 create index record_tree_gist_idx on {{schema_ident}}.record using gist (tree);
 

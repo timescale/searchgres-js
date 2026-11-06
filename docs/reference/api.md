@@ -25,8 +25,9 @@ import {
 ### `ensureExtensions(sql, options?) → Promise<readonly ExtensionInfo[]>`
 
 Installs or verifies the required PostgreSQL extensions (`vector`,
-`pg_textsearch`, `ltree`) in `public` under a database-wide advisory lock.
-Accepts `lockTimeoutMs` and `transactionTimeoutMs`.
+`pg_textsearch`, `ltree`, and `pg_vectorsearch` when `vectorIndex: "prism"`) in
+`public` under a database-wide advisory lock. Accepts `vectorIndex`,
+`lockTimeoutMs`, and `transactionTimeoutMs`.
 
 ```ts
 await ensureExtensions(sql);
@@ -51,13 +52,12 @@ await createIndex(sql, "docs_index", {
 
 | Config field | Default | Notes |
 | --- | --- | --- |
-| `dimensions` | — (required) | 1–4000 for `halfvec`, 1–2000 for `vector`. |
+| `dimensions` | — (required) | `hnsw`: 1–4000 for `halfvec`, 1–2000 for `vector`. `prism`: 1–1968 for both. |
 | `vectorType` | `"halfvec"` | `"halfvec"` or `"vector"`; cosine distance either way. |
 | `bm25.textConfig` | `"english"` | Must name an installed text search config. |
 | `bm25.k1` | `1.2` | 0.1–10. |
 | `bm25.b` | `0.75` | 0–1. |
-| `hnsw.m` | `16` | 2–100. |
-| `hnsw.efConstruction` | `64` | 4–1000. |
+| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Discriminated union on `method: "hnsw" \| "prism"`. `hnsw` accepts `m` (2–100) and `efConstruction` (4–1000). `prism` accepts optional `nlist` (1–2,000,000) and `targetPages` (1–64). Top-level `hnsw` is accepted as shorthand when `vectorIndex` is omitted. |
 
 The optional fourth argument sets runtime budgets for the call itself. Nothing
 in it is persisted or affects the resulting index.
@@ -124,7 +124,7 @@ one. Also available as `index.drop()`.
 ## The `Index` handle
 
 Obtain a handle from `openIndex()`. Read-only properties: `schema`,
-`vectorType`, `dimensions`, `embedding`, `truncate`.
+`vectorType`, `dimensions`, `vectorIndex`, `embedding`, `truncate`.
 
 ### Writing
 
@@ -397,6 +397,13 @@ opened with a real model. `search({ semantic })`, `processEmbeddings()`, and
 `startEmbeddingWorker()` throw [`EmbeddingUnavailableError`](errors.md) before
 claiming any queue row or running any query. Compare by identity:
 `index.embedding === noEmbedding`.
+
+### Vector index maintenance
+
+| Method | Returns | Notes |
+| --- | --- | --- |
+| `vectorIndexStats()` | `VectorIndexStats` | Returns `method`, `indexName`, `indexSizeBytes`, `embeddedRecords`, and for `prism` indexes `prism: { nlist, idealNlist, targetPages, targetEntries, nlevels, postingPages, needsReindex, reindexReason }`. |
+| `reindexVectorIndex(options?)` | `VectorIndexStats` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index and returns updated `VectorIndexStats`. Options: `concurrently?: boolean`, `lockTimeoutMs?: number`, `statementTimeoutMs?: number`. |
 
 ### Transactions and lifecycle
 

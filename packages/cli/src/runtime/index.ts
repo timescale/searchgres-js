@@ -199,6 +199,7 @@ export async function openRuntime(
             schema: index.schema,
             dimensions: index.dimensions,
             vectorType: index.vectorType,
+            vectorIndex: index.vectorIndex,
           },
           capabilities: {
             semantic: true,

@@ -1,7 +1,12 @@
 import type postgres from "postgres";
+import {
+  MAX_PRISM_DIMENSIONS,
+  MAX_VECTOR_DIMENSIONS,
+  type VectorIndexMethod,
+} from "../config.ts";
 import { InvalidIndexError } from "../errors.ts";
 import { runSql } from "../sql/exec.ts";
-import type { StoredIndexShape } from "./template.ts";
+import { cosineOpclassForShape, type StoredIndexShape } from "./template.ts";
 
 /**
  * Comment stamped on every index schema by `createIndex`. It is the first
@@ -216,34 +221,59 @@ interface EmbeddingColumnRow {
   readonly display_type: string;
 }
 
-interface HnswOpclassRow {
+interface VectorIndexOpclassRow {
+  readonly relname: string;
   readonly opcname: string;
   readonly opclass_schema: string;
   readonly amname: string;
+  readonly has_cosine_amop: boolean;
+}
+
+export interface ValidatedIndexShape extends StoredIndexShape {
+  readonly vectorIndex: VectorIndexMethod;
 }
 
 /**
- * Inspect the index's stored embedding column and HNSW cosine index in the
- * catalog and return its validated vector type and dimensions.
+ * Inspect the index's stored embedding column and cosine ANN index (`hnsw` or
+ * `prism`) in the catalog and return its validated vector type, dimensions, and
+ * vector index access method.
  */
 export async function readIndexShape(
   sql: postgres.ISql,
   schema: string,
-): Promise<StoredIndexShape> {
+): Promise<ValidatedIndexShape> {
   const embedding = await readEmbeddingColumn(sql, schema);
   if (embedding.type_schema !== "public") {
     throw new InvalidIndexError(schema);
   }
   const vectorShape = parseVectorShape(embedding, schema);
-  const hnswOpclass = await readHnswOpclass(sql, schema);
+  const vectorIndex = await readVectorIndexOpclass(
+    sql,
+    schema,
+    vectorShape.vectorType,
+  );
+  const method: VectorIndexMethod =
+    vectorIndex.relname === "record_embedding_prism_idx" ? "prism" : "hnsw";
+  const maxDimensions =
+    method === "prism"
+      ? MAX_PRISM_DIMENSIONS
+      : MAX_VECTOR_DIMENSIONS[vectorShape.vectorType];
   if (
-    hnswOpclass.amname !== "hnsw" ||
-    hnswOpclass.opclass_schema !== "public" ||
-    hnswOpclass.opcname !== `${vectorShape.vectorType}_cosine_ops`
+    vectorShape.dimensions < 1 ||
+    vectorShape.dimensions > maxDimensions ||
+    vectorIndex.amname !== method ||
+    vectorIndex.opclass_schema !== "public" ||
+    vectorIndex.opcname !==
+      cosineOpclassForShape(vectorShape.vectorType, method) ||
+    !vectorIndex.has_cosine_amop
   ) {
     throw new InvalidIndexError(schema);
   }
-  return vectorShape;
+  return {
+    vectorType: vectorShape.vectorType,
+    dimensions: vectorShape.dimensions,
+    vectorIndex: method,
+  };
 }
 
 async function readEmbeddingColumn(
@@ -281,7 +311,7 @@ async function readEmbeddingColumn(
 function parseVectorShape(
   column: EmbeddingColumnRow,
   schema: string,
-): StoredIndexShape {
+): { readonly vectorType: "vector" | "halfvec"; readonly dimensions: number } {
   if (column.type_name !== "vector" && column.type_name !== "halfvec") {
     throw new InvalidIndexError(schema);
   }
@@ -295,16 +325,36 @@ function parseVectorShape(
   };
 }
 
-async function readHnswOpclass(
+async function readVectorIndexOpclass(
   sql: postgres.ISql,
   schema: string,
-): Promise<HnswOpclassRow> {
-  const [row] = await runSql(
-    sql<HnswOpclassRow[]>`
+  vectorType: "vector" | "halfvec",
+): Promise<VectorIndexOpclassRow> {
+  const rows = await runSql(
+    sql<VectorIndexOpclassRow[]>`
       select
-        opc.opcname
+        c.relname
+      , opc.opcname
       , opn.nspname as opclass_schema
       , am.amname
+      , exists
+        (
+          select 1
+          from pg_catalog.pg_amop amop
+          inner join pg_catalog.pg_operator opr on (opr.oid = amop.amopopr)
+          inner join pg_catalog.pg_namespace oprn on (oprn.oid = opr.oprnamespace)
+          inner join pg_catalog.pg_type lt on (lt.oid = amop.amoplefttype)
+          inner join pg_catalog.pg_namespace ltn on (ltn.oid = lt.typnamespace)
+          where amop.amopfamily = opc.opcfamily
+          and amop.amopmethod = am.oid
+          and amop.amoppurpose = 'o'
+          and amop.amopstrategy = 1
+          and oprn.nspname = 'public'
+          and opr.oprname = '<=>'
+          and ltn.nspname = 'public'
+          and lt.typname = ${vectorType}
+          and amop.amoprighttype = amop.amoplefttype
+        ) as has_cosine_amop
       from pg_catalog.pg_index i
       inner join pg_catalog.pg_class c on (c.oid = i.indexrelid)
       inner join pg_catalog.pg_namespace n on (n.oid = c.relnamespace)
@@ -312,7 +362,7 @@ async function readHnswOpclass(
       inner join pg_catalog.pg_namespace opn on (opn.oid = opc.opcnamespace)
       inner join pg_catalog.pg_am am on (am.oid = opc.opcmethod)
       where n.nspname = ${schema}
-      and c.relname = 'record_embedding_hnsw_idx'
+      and c.relname in ('record_embedding_hnsw_idx', 'record_embedding_prism_idx')
     `,
     {
       spanName: "readHnswOpclass",
@@ -320,8 +370,8 @@ async function readHnswOpclass(
       namespace: schema,
     },
   );
-  if (!row) {
+  if (rows.length !== 1 || !rows[0]) {
     throw new InvalidIndexError(schema);
   }
-  return row;
+  return rows[0];
 }

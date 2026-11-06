@@ -540,3 +540,111 @@ as $func$
 $func$ language sql volatile security invoker
 set search_path to pg_catalog, public, pg_temp
 ;
+
+--------------------------------------------------------------------------------
+-- vector_index_stats
+--------------------------------------------------------------------------------
+create or replace function {{schema_ident}}.vector_index_stats()
+returns table
+( method text
+, index_name text
+, index_size_bytes bigint
+, embedded_records bigint
+, prism_nlist integer
+, prism_ideal_nlist integer
+, prism_target_pages integer
+, prism_target_entries integer
+, prism_nlevels integer
+, prism_posting_pages bigint
+, prism_needs_reindex boolean
+, prism_reindex_reason text
+)
+as $func$
+#variable_conflict use_column
+declare
+  _index_oid oid;
+  _index_name text;
+  _method text;
+  _size_bytes bigint;
+  _embedded bigint;
+  _nlist integer;
+  _target_pages integer;
+  _target_entries integer;
+  _nlevels integer;
+  _posting_pages bigint;
+  _count float8;
+  _linear integer;
+  _min_lists integer;
+  _ideal_nlist integer;
+  _needs_reindex boolean;
+  _reason text;
+begin
+  select
+    c.oid
+  , c.relname::text
+  , am.amname::text
+  , pg_catalog.pg_relation_size(c.oid)
+  into
+    _index_oid
+  , _index_name
+  , _method
+  , _size_bytes
+  from pg_catalog.pg_class c
+  inner join pg_catalog.pg_am am
+    on am.oid = c.relam
+  where c.oid = {{vector_index_literal}}::pg_catalog.regclass;
+
+  select count(*) filter (where r.embedding is not null)::bigint
+  into _embedded
+  from {{schema_ident}}.record r;
+
+  if _method = 'prism' then
+    select
+      max(s.setting::integer) filter (where s.name = 'nlist')
+    , max(s.setting::integer) filter (where s.name = 'target_pages')
+    , max(s.setting::integer) filter (where s.name = 'target_entries')
+    , max(s.setting::integer) filter (where s.name = 'nlevels')
+    , max(s.setting::bigint) filter (where s.name = 'posting_pages')
+    into
+      _nlist
+    , _target_pages
+    , _target_entries
+    , _nlevels
+    , _posting_pages
+    from public.prism_index_settings(_index_oid) s;
+
+    _count := greatest(_embedded::float8, 1.0);
+    _linear := trunc(_count / _target_entries::float8 + 0.5)::integer;
+    _min_lists := trunc(sqrt(_count))::integer;
+    _ideal_nlist := greatest(_linear, _min_lists, 1);
+
+    if _nlist = 1 and _ideal_nlist >= 2 then
+      _needs_reindex := true;
+      _reason := 'bootstrap_single_cluster';
+    elsif _embedded > (_nlist::bigint * _target_entries::bigint * 2) then
+      _needs_reindex := true;
+      _reason := 'cluster_drift';
+    else
+      _needs_reindex := false;
+      _reason := null;
+    end if;
+  end if;
+
+  return query
+  select
+    _method
+  , _index_name
+  , _size_bytes
+  , _embedded
+  , _nlist
+  , _ideal_nlist
+  , _target_pages
+  , _target_entries
+  , _nlevels
+  , _posting_pages
+  , _needs_reindex
+  , _reason;
+end;
+$func$ language plpgsql stable security invoker
+set search_path to pg_catalog, public, pg_temp
+;

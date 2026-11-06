@@ -1,4 +1,10 @@
-import { type IndexConfig, normalizeIndexConfig } from "../config.ts";
+import {
+  type IndexConfig,
+  MAX_PRISM_DIMENSIONS,
+  MAX_VECTOR_DIMENSIONS,
+  normalizeIndexConfig,
+  type VectorIndexMethod,
+} from "../config.ts";
 import { assertSchemaName } from "../identifiers.ts";
 import { INDEX_SCHEMA_COMMENT } from "./marker.ts";
 
@@ -13,7 +19,11 @@ const variableNames = [
   "schema_comment_literal",
   "vector_type_ident",
   "dimensions_int",
+  "vector_index_ident",
+  "vector_index_literal",
+  "vector_index_am_ident",
   "cosine_opclass_ident",
+  "vector_index_with_clause",
   "text_config_literal",
   "bm25_k1_number",
   "bm25_b_number",
@@ -73,6 +83,23 @@ export interface IndexSqlContext {
 export interface StoredIndexShape {
   readonly vectorType: "vector" | "halfvec";
   readonly dimensions: number;
+  readonly vectorIndex?: VectorIndexMethod;
+}
+
+export function vectorIndexNameForMethod(method: VectorIndexMethod): string {
+  return method === "prism"
+    ? "record_embedding_prism_idx"
+    : "record_embedding_hnsw_idx";
+}
+
+export function cosineOpclassForShape(
+  vectorType: "vector" | "halfvec",
+  method: VectorIndexMethod,
+): string {
+  if (method === "prism") {
+    return vectorType === "vector" ? "vec32_cosine_ops" : "vec16_cosine_ops";
+  }
+  return `${vectorType}_cosine_ops`;
 }
 
 /** One closed context for provisioning. Record data never enters templates. */
@@ -83,6 +110,38 @@ export function indexSqlContext(
 ): IndexSqlContext {
   const name = assertSchemaName(schema);
   const normalized = normalizeIndexConfig(config);
+  const method = normalized.vectorIndex.method;
+  const vectorIndexIdent = sqlIdentifier(vectorIndexNameForMethod(method));
+  const vectorIndexAmIdent = sqlIdentifier(method);
+  const cosineOpclassIdent = sqlIdentifier(
+    cosineOpclassForShape(normalized.vectorType, method),
+  );
+
+  let vectorIndexWithClause: SqlFragment;
+  if (normalized.vectorIndex.method === "hnsw") {
+    const m = sqlNumber(normalized.vectorIndex.m, true);
+    const ef = sqlNumber(normalized.vectorIndex.efConstruction, true);
+    vectorIndexWithClause = trusted(
+      `\nwith\n( m = ${m.text}\n, ef_construction = ${ef.text}\n)`,
+    );
+  } else {
+    const prismOpts: string[] = [];
+    if (normalized.vectorIndex.nlist !== undefined) {
+      prismOpts.push(
+        `nlist = ${sqlNumber(normalized.vectorIndex.nlist, true).text}`,
+      );
+    }
+    if (normalized.vectorIndex.targetPages !== undefined) {
+      prismOpts.push(
+        `target_pages = ${sqlNumber(normalized.vectorIndex.targetPages, true).text}`,
+      );
+    }
+    vectorIndexWithClause =
+      prismOpts.length === 0
+        ? trusted("")
+        : trusted(`\nwith\n( ${prismOpts.join("\n, ")}\n)`);
+  }
+
   return Object.freeze({
     schema: name,
     variables: Object.freeze({
@@ -90,9 +149,13 @@ export function indexSqlContext(
       schema_comment_literal: sqlLiteral(INDEX_SCHEMA_COMMENT),
       vector_type_ident: sqlIdentifier(normalized.vectorType),
       dimensions_int: sqlNumber(normalized.dimensions, true),
-      cosine_opclass_ident: sqlIdentifier(
-        `${normalized.vectorType}_cosine_ops`,
+      vector_index_ident: vectorIndexIdent,
+      vector_index_literal: sqlLiteral(
+        `${name}.${vectorIndexNameForMethod(method)}`,
       ),
+      vector_index_am_ident: vectorIndexAmIdent,
+      cosine_opclass_ident: cosineOpclassIdent,
+      vector_index_with_clause: vectorIndexWithClause,
       text_config_literal: catalogLiteral(textConfigLiteral),
       bm25_k1_number: sqlNumber(normalized.bm25.k1),
       bm25_b_number: sqlNumber(normalized.bm25.b),
@@ -105,8 +168,8 @@ export function indexSqlContext(
 
 /**
  * Context for migrating an existing index using its stored vector shape.
- * Omits creation-only BM25/HNSW parameters so migrations and repeatable SQL
- * cannot silently fall back to creation defaults.
+ * Omits creation-only BM25/HNSW/PRISM parameters so migrations and repeatable
+ * SQL cannot silently fall back to creation defaults.
  */
 export function migrationSqlContext(
   schema: string,
@@ -116,7 +179,14 @@ export function migrationSqlContext(
   if (shape.vectorType !== "vector" && shape.vectorType !== "halfvec") {
     throw new Error(`Invalid vector type: ${String(shape.vectorType)}`);
   }
-  const maxDimensions = shape.vectorType === "vector" ? 2000 : 4000;
+  const method: VectorIndexMethod = shape.vectorIndex ?? "hnsw";
+  if (method !== "hnsw" && method !== "prism") {
+    throw new Error(`Invalid vector index method: ${String(method)}`);
+  }
+  const maxDimensions =
+    method === "prism"
+      ? MAX_PRISM_DIMENSIONS
+      : MAX_VECTOR_DIMENSIONS[shape.vectorType];
   if (
     !Number.isSafeInteger(shape.dimensions) ||
     shape.dimensions < 1 ||
@@ -131,7 +201,14 @@ export function migrationSqlContext(
       schema_comment_literal: sqlLiteral(INDEX_SCHEMA_COMMENT),
       vector_type_ident: sqlIdentifier(shape.vectorType),
       dimensions_int: sqlNumber(shape.dimensions, true),
-      cosine_opclass_ident: sqlIdentifier(`${shape.vectorType}_cosine_ops`),
+      vector_index_ident: sqlIdentifier(vectorIndexNameForMethod(method)),
+      vector_index_literal: sqlLiteral(
+        `${name}.${vectorIndexNameForMethod(method)}`,
+      ),
+      vector_index_am_ident: sqlIdentifier(method),
+      cosine_opclass_ident: sqlIdentifier(
+        cosineOpclassForShape(shape.vectorType, method),
+      ),
       bm25_index_literal: sqlLiteral(`${name}.record_content_bm25_idx`),
     }),
   });

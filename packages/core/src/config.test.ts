@@ -14,10 +14,12 @@ test("config defaults match the extension defaults", () => {
     vectorType: "halfvec",
     bm25: { textConfig: "english", k1: 1.2, b: 0.75 },
     hnsw: { m: 16, efConstruction: 64 },
+    vectorIndex: { method: "hnsw", m: 16, efConstruction: 64 },
   });
   assert.equal(Object.isFrozen(config), true);
   assert.equal(Object.isFrozen(config.bm25), true);
   assert.equal(Object.isFrozen(config.hnsw), true);
+  assert.equal(Object.isFrozen(config.vectorIndex), true);
 });
 
 test("custom values at upstream boundaries are accepted", () => {
@@ -38,6 +40,24 @@ test("custom values at upstream boundaries are accepted", () => {
   });
   assert.equal(high.dimensions, 4000);
   assert.equal(high.hnsw.efConstruction, 1000);
+
+  const prismDefault = normalizeIndexConfig({
+    dimensions: 1968,
+    vectorType: "halfvec",
+    vectorIndex: { method: "prism" },
+  });
+  assert.deepEqual(prismDefault.vectorIndex, { method: "prism" });
+
+  const prismCustom = normalizeIndexConfig({
+    dimensions: 1968,
+    vectorType: "vector",
+    vectorIndex: { method: "prism", nlist: 1024, targetPages: 4 },
+  });
+  assert.deepEqual(prismCustom.vectorIndex, {
+    method: "prism",
+    nlist: 1024,
+    targetPages: 4,
+  });
 });
 
 test("vector and halfvec enforce their HNSW dimension ceilings", () => {
@@ -56,6 +76,33 @@ test("vector and halfvec enforce their HNSW dimension ceilings", () => {
     },
     "dimensions",
     /between 1 and 4000/,
+  );
+  assertInvalid(
+    {
+      dimensions: 1969,
+      vectorType: "halfvec",
+      vectorIndex: { method: "prism" },
+    },
+    "dimensions",
+    /between 1 and 1968 for prism/,
+  );
+  assertInvalid(
+    {
+      dimensions: 1536,
+      hnsw: { m: 16 },
+      vectorIndex: { method: "prism" },
+    },
+    "vectorIndex",
+    /cannot specify both hnsw and vectorIndex/,
+  );
+  assertInvalid(
+    {
+      dimensions: 1536,
+      hnsw: { m: 16 },
+      vectorIndex: { method: "hnsw" },
+    },
+    "vectorIndex",
+    /cannot specify both hnsw and vectorIndex/,
   );
 });
 

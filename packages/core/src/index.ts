@@ -20,6 +20,7 @@ export {
   type ExtensionInfo,
   type ExtensionRequirement,
   ensureExtensions,
+  PRISM_EXTENSION_REQUIREMENT,
   REQUIRED_EXTENSIONS,
 } from "./db/extensions.ts";
 export { dropIndex } from "./drop-index.ts";
@@ -39,7 +40,14 @@ export {
   migrateIndex,
 } from "./migrate-index.ts";
 export * from "./open-index.ts";
-export type { PatchInput, StoredRecord } from "./records.ts";
+export type {
+  PatchInput,
+  PrismIndexStats,
+  PrismReindexReason,
+  ReindexVectorIndexOptions,
+  StoredRecord,
+  VectorIndexStats,
+} from "./records.ts";
 export type {
   Filter,
   SearchOptions,

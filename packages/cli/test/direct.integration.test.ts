@@ -150,11 +150,26 @@ test("provisioning is strict and provider-free; config generation is offline", a
     "offline",
     "--dimensions",
     "4",
+    "--vector-index",
+    "prism",
     "--embedding-model",
     "test",
     "--dry-run",
   ]);
   expect(generated.value.index.schema).toBe("offline");
+  expect(generated.value.index.vectorIndex).toBe("prism");
+  expect((await cli(["vector-index", "stats"])).value).toMatchObject({
+    method: "hnsw",
+    indexName: "record_embedding_hnsw_idx",
+    prism: null,
+  });
+  expect(
+    (await cli(["vector-index", "reindex", "--concurrently"])).value,
+  ).toMatchObject({
+    method: "hnsw",
+    indexName: "record_embedding_hnsw_idx",
+    prism: null,
+  });
   expect(calls).toBe(0);
 });
 

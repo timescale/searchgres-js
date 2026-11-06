@@ -9,7 +9,11 @@ import {
   type Migration,
   migrationTableMigration,
 } from "./db/definitions.ts";
-import { getExtensionInfo, REQUIRED_EXTENSIONS } from "./db/extensions.ts";
+import {
+  getExtensionInfo,
+  PRISM_EXTENSION_REQUIREMENT,
+  REQUIRED_EXTENSIONS,
+} from "./db/extensions.ts";
 import { acquireAdvisoryLock, advisoryLockKey } from "./db/lock.ts";
 import {
   readIndexMarker,
@@ -299,6 +303,9 @@ async function migrateIndexSchema(
     }
 
     const vectorShape = await readIndexShape(tx, indexSchema);
+    if (vectorShape.vectorIndex === "prism") {
+      await getExtensionInfo(tx, PRISM_EXTENSION_REQUIREMENT);
+    }
     const context = migrationSqlContext(indexSchema, vectorShape);
 
     if (version === MINIMUM_MIGRATABLE_SCHEMA_VERSION) {

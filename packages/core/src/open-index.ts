@@ -2,6 +2,7 @@ import type { Attributes, Span } from "@opentelemetry/api";
 import type { EmbeddingModel } from "ai";
 import type postgres from "postgres";
 import { z } from "zod";
+import type { VectorIndexMethod } from "./config.ts";
 import { SCHEMA_FORMAT_VERSION } from "./create-index.ts";
 import {
   type EmbeddingFailure,
@@ -14,7 +15,11 @@ import {
   type RetryEmbeddingFailuresResult,
   retryEmbeddingFailures,
 } from "./db/embedding-queue.ts";
-import { getExtensionInfo, REQUIRED_EXTENSIONS } from "./db/extensions.ts";
+import {
+  getExtensionInfo,
+  PRISM_EXTENSION_REQUIREMENT,
+  REQUIRED_EXTENSIONS,
+} from "./db/extensions.ts";
 import {
   readIndexMarker,
   readIndexShape,
@@ -43,7 +48,11 @@ import {
   getByName,
   type PatchInput,
   patch,
+  type ReindexVectorIndexOptions,
+  reindexVectorIndex,
   type StoredRecord,
+  type VectorIndexStats,
+  vectorIndexStats,
 } from "./records.ts";
 import { type SearchOptions, type SearchResult, search } from "./search.ts";
 import {
@@ -154,6 +163,7 @@ export class Index implements TransactionIndex {
   readonly schema: string;
   readonly vectorType: "vector" | "halfvec";
   readonly dimensions: number;
+  readonly vectorIndex: VectorIndexMethod;
   readonly embedding: EmbeddingModel;
   readonly truncate: Truncator;
 
@@ -166,6 +176,7 @@ export class Index implements TransactionIndex {
     schema: string;
     vectorType: "vector" | "halfvec";
     dimensions: number;
+    vectorIndex?: VectorIndexMethod;
     embedding: EmbeddingModel;
     truncate: Truncator;
   }) {
@@ -173,6 +184,7 @@ export class Index implements TransactionIndex {
     this.schema = options.schema;
     this.vectorType = options.vectorType;
     this.dimensions = options.dimensions;
+    this.vectorIndex = options.vectorIndex ?? "hnsw";
     this.embedding = options.embedding;
     this.truncate = options.truncate;
   }
@@ -524,6 +536,60 @@ export class Index implements TransactionIndex {
     );
   }
 
+  /** Inspect vector index shape, size, and (for `prism`) cluster health. */
+  async vectorIndexStats(): Promise<VectorIndexStats> {
+    return runIndexOperation(
+      this,
+      "searchgres.index.vector_stats",
+      async (span) => {
+        const stats = await vectorIndexStats(this);
+        span.setAttributes({
+          "searchgres.index.vector_method": stats.method,
+          "searchgres.index.embedded_records": stats.embeddedRecords,
+          ...(stats.prism !== null
+            ? {
+                "searchgres.index.prism.nlist": stats.prism.nlist,
+                "searchgres.index.prism.ideal_nlist": stats.prism.idealNlist,
+                "searchgres.index.prism.needs_reindex":
+                  stats.prism.needsReindex,
+              }
+            : {}),
+        });
+        return stats;
+      },
+    );
+  }
+
+  /** Rebuild the vector index (`REINDEX INDEX [CONCURRENTLY]`) and return updated stats. */
+  async reindexVectorIndex(
+    options?: ReindexVectorIndexOptions,
+  ): Promise<VectorIndexStats> {
+    return runIndexOperation(
+      this,
+      "searchgres.index.vector_reindex",
+      async (span) => {
+        span.setAttribute(
+          "searchgres.index.concurrently",
+          options?.concurrently ?? false,
+        );
+        const stats = await reindexVectorIndex(this, options);
+        span.setAttributes({
+          "searchgres.index.vector_method": stats.method,
+          "searchgres.index.embedded_records": stats.embeddedRecords,
+          ...(stats.prism !== null
+            ? {
+                "searchgres.index.prism.nlist": stats.prism.nlist,
+                "searchgres.index.prism.ideal_nlist": stats.prism.idealNlist,
+                "searchgres.index.prism.needs_reindex":
+                  stats.prism.needsReindex,
+              }
+            : {}),
+        });
+        return stats;
+      },
+    );
+  }
+
   /**
    * Bind record/tree operations to a caller-owned transaction so they compose
    * atomically. A no-I/O clone; the caller owns commit/rollback and the pool.
@@ -537,6 +603,7 @@ export class Index implements TransactionIndex {
       schema: this.schema,
       vectorType: this.vectorType,
       dimensions: this.dimensions,
+      vectorIndex: this.vectorIndex,
       embedding: this.embedding,
       truncate: this.truncate,
     });
@@ -689,12 +756,16 @@ async function openIndexHandle(
   }
 
   const vectorShape = await readIndexShape(sql, indexSchema);
+  if (vectorShape.vectorIndex === "prism") {
+    await getExtensionInfo(sql, PRISM_EXTENSION_REQUIREMENT);
+  }
 
   return new Index({
     sql,
     schema: indexSchema,
     vectorType: vectorShape.vectorType,
     dimensions: vectorShape.dimensions,
+    vectorIndex: vectorShape.vectorIndex,
     embedding: opts.embedding,
     truncate: opts.truncate ?? noTruncation,
   });
