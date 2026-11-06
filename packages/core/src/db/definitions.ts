@@ -142,6 +142,7 @@ export async function executeMigrationFile(
     spanName: `${migration.type}:${migration.name}`,
     dbOperationName: "CREATE",
     namespace: context.schema,
+    queryText: rendered,
     attributes: {
       "searchgres.migration.name": migration.name,
       "searchgres.migration.file": migration.file,

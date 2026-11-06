@@ -83,7 +83,7 @@ try {
   const manifest = JSON.parse(
     await readFile(join(installed, "package.json"), "utf8"),
   );
-  assert.equal(manifest.peerDependencies?.postgres, "^3.4.9");
+  assert.equal(manifest.peerDependencies?.postgres, "^3.4.9 || ^4.1.0");
   assert.equal(manifest.dependencies?.postgres, undefined);
   const shipped = await readdir(installed, { recursive: true });
   assert.ok(!shipped.includes("src"));
@@ -127,10 +127,6 @@ try {
       files: ["consumer.ts"],
     }),
   );
-  await run(
-    [bun, "x", "--no-install", "tsc", "-p", join(consumer, "tsconfig.json")],
-    root,
-  );
 
   // Use the same Bun text loader as the production build, with real SQL bytes.
   // Keep this probe out of the published package and remove its sources before
@@ -155,7 +151,23 @@ try {
   if (!probe.success)
     throw new AggregateError(probe.logs, "SQL probe build failed");
   await rm(probeSource, { recursive: true });
-  await run(["node", "--enable-source-maps", "consumer.mjs"]);
+  // Core supports both postgres.js majors. Check the declarations and run the
+  // Node consumer with each. Bun and the compiled binary use the last one.
+  for (const driver of ["postgres@^3.4.9", "postgres@^4.1.0"]) {
+    await run([
+      "npm",
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      driver,
+    ]);
+    await run(
+      [bun, "x", "--no-install", "tsc", "-p", join(consumer, "tsconfig.json")],
+      root,
+    );
+    await run(["node", "--enable-source-maps", "consumer.mjs"]);
+  }
   await run([bun, "consumer.mjs"]);
 
   // The compiled path must embed direct SQL imports too, not only already

@@ -19,7 +19,7 @@
     "lint": "./bun x biome check",
     "format": "./bun x biome check --write",
     "test:unit": "./bun run --filter searchgres build && ./bun run --filter searchgres test:unit && ./bun run --filter @searchgres/cli test:unit && ./bun test ./scripts/*.test.ts",
-    "test:db": "./bun run compile && ./bun run --filter searchgres test:db && ./bun run --filter @searchgres/cli test:db && ./bun run test:package",
+    "test:db": "./bun run compile && ./bun run --filter searchgres test:db && SEARCHGRES_TEST_POSTGRES_JS=4 ./bun run --filter searchgres test:db && ./bun run --filter @searchgres/cli test:db && ./bun run test:package",
     "test:package": "./bun scripts/test-package.ts",
     "generate:filter-grammar": "./bun scripts/filter-grammar.ts",
     "check:filter-grammar": "./bun scripts/filter-grammar.ts --check",

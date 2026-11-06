@@ -25,7 +25,7 @@ You will:
 Install the packages:
 
 ```bash
-npm install searchgres postgres@3 @ai-sdk/openai
+npm install searchgres postgres @ai-sdk/openai
 ```
 
 Set your connection string and provider key:

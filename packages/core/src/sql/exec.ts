@@ -18,6 +18,11 @@ export interface SqlOperation {
   readonly namespace?: string;
   /** Optional non-sensitive metadata attributes (such as migration file info). */
   readonly attributes?: Attributes;
+  /**
+   * Parameter-free statement text to record when the result has no
+   * `statement`. postgres.js 4 omits it for a multi-statement `sql.unsafe()`.
+   */
+  readonly queryText?: string;
 }
 
 interface QueryResult {
@@ -81,7 +86,10 @@ export async function runSql<T extends QueryResult>(
     async (span) => {
       try {
         const result = await query;
-        span.setAttribute("db.query.text", result.statement?.string ?? "");
+        span.setAttribute(
+          "db.query.text",
+          result.statement?.string ?? operation.queryText ?? "",
+        );
         span.setAttribute("db.response.returned_rows", result.length ?? 0);
         return result;
       } catch (error) {

@@ -7,7 +7,6 @@ import { toValidationIssue } from "../validation.ts";
 
 const MAX_QUEUE_PAGE_SIZE = 1000;
 const MAX_RETRY_BATCH_SIZE = 1000;
-const POSTGRES_TEXT_OID = 25;
 const MAX_POSTGRES_BIGINT = 9_223_372_036_854_775_807n;
 
 const queueIdSchema = z
@@ -379,7 +378,7 @@ export async function retryEmbeddingFailures(
   const [row] = await runSql(
     sql<{ retried: string }[]>`
       select ${sql(schema)}.retry_embedding_failures
-      ( ${sql.array([...parsed.queueIds], POSTGRES_TEXT_OID)}::text[]::pg_catalog.int8[]
+      ( ${[...parsed.queueIds]}::text[]::pg_catalog.int8[]
       )::text as retried
     `,
     {
