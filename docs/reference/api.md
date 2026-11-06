@@ -403,7 +403,7 @@ claiming any queue row or running any query. Compare by identity:
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `vectorIndexStats()` | `VectorIndexStats` | Returns `method`, `indexName`, `indexSizeBytes`, `embeddedRecords`, and for `prism` indexes `prism: { nlist, pinnedNlist, idealNlist, targetPages, targetEntries, nlevels, postingPages, needsReindex, reindexReason }`. |
-| `reindexVectorIndex(options?)` | `VectorIndexStats` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index and returns updated `VectorIndexStats`. Options: `concurrently?: boolean`, `nlist?: number \| "auto"` (`prism` only: pins `nlist` or resets to automatic sizing before rebuilding), `lockTimeoutMs?: number`, `statementTimeoutMs?: number`. |
+| `reindexVectorIndex(options?)` | `VectorIndexStats` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index and returns updated `VectorIndexStats`. For `prism`, it first runs `ANALYZE` on the record table so the rebuild sizes `nlist` from the current row count. Options: `concurrently?: boolean`, `nlist?: number \| "auto"` (`prism` only: pins `nlist` or resets to automatic sizing before rebuilding), `lockTimeoutMs?: number`, `statementTimeoutMs?: number`. |
 
 ### Transactions and lifecycle
 
