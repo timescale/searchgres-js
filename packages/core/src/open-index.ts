@@ -731,21 +731,6 @@ export async function openIndex(
   });
 }
 
-/**
- * Writes bind bulk arrays with `sql.array()`. postgres.js 4 removed that
- * helper, so a v4 instance fails only at the first write. Reject it here.
- */
-function assertPostgresV3(sql: postgres.Sql): void {
-  try {
-    sql.array([], 25);
-  } catch (error) {
-    throw new InvalidConfigError(
-      "searchgres requires a postgres.js 3.x sql instance (postgres@^3.4.9); postgres.js 4 removed sql.array()",
-      { cause: error },
-    );
-  }
-}
-
 async function openIndexHandle(
   sql: postgres.Sql,
   schema: string,
@@ -753,7 +738,6 @@ async function openIndexHandle(
 ): Promise<Index> {
   const indexSchema = assertSchemaName(schema);
   const opts = normalizeOpenIndexOptions(options);
-  assertPostgresV3(sql);
   const version = await readIndexMarker(sql, indexSchema);
   if (version !== SCHEMA_FORMAT_VERSION) {
     throw new SchemaVersionError(indexSchema, version, SCHEMA_FORMAT_VERSION);

@@ -29,11 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SCHEMA_FORMAT_VERSION` to `"3"`.
 - Replace `IndexConfig.hnsw` with the discriminated union
   `IndexConfig.vectorIndex` (`{ method: "hnsw", m?, efConstruction? } | { method: "prism", nlist?, targetPages? }`).
-- Make `postgres` a peer dependency (`^3.4.9`) instead of a regular
-  dependency, and make `openIndex()` reject a postgres.js 4 `sql` instance
-  with `InvalidConfigError`. postgres.js 4 removed `sql.array()`, so a v4
-  instance previously failed at the first write. Install with
-  `npm install searchgres postgres@3`.
+- Support postgres.js 4 as well as 3. `postgres` is now a peer dependency
+  (`^3.4.9 || ^4.1.0`) instead of a regular dependency. Previously a
+  postgres.js 4 `sql` instance failed at the first write, because core used
+  `sql.array()`, which postgres.js 4 removed. Bulk arrays are now plain
+  arrays with `::text[]` casts, which both majors encode correctly.
 - Say why an index is invalid: `InvalidIndexError` now reports a missing
   schema or a missing vector index.
 - The CLI and MCP server now keep the messages of index, schema-format,

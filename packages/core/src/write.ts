@@ -16,8 +16,6 @@ import { normalizeTemporalTuple, temporalTupleSchema } from "./temporal.ts";
 import { metaSchema, toValidationIssue } from "./validation.ts";
 
 const MAX_UPSERT_BATCH_SIZE = 1000;
-/** Built-in PostgreSQL `text` OID, used as sql.array's element type. */
-const POSTGRES_TEXT_OID = 25;
 
 const recordSchema = z
   .object({
@@ -149,26 +147,29 @@ export async function upsertMany(
   if (ids.length === 0) return [];
 
   const { sql } = index;
-  // postgres.js discovers array serializers when each connection starts. If
-  // createIndex installs extension types on that same connection, its cached
-  // map does not yet contain ltree[] or vector[]. Bind every parallel array as
-  // the always-known text[] type, then let PostgreSQL cast each element to the
-  // routine's qualified destination type. sql.array owns array escaping, nulls,
-  // and empty-array encoding; values remain parameters.
+  // postgres.js 3 learns array types when each connection starts. If
+  // createIndex installs extension types on that same connection, it does not
+  // know ltree[] or vector[], and it sends a bare array to such a parameter as
+  // "a,b". Each array parameter has a literal ::text[] cast, so the server
+  // describes it as the built-in text[] type, which postgres.js 3 and 4 both
+  // encode correctly. PostgreSQL then casts the elements to the routine's
+  // qualified destination type. postgres.js owns array escaping, nulls, and
+  // empty arrays; values remain parameters. Do not interpolate the cast, and do
+  // not bind an array directly to an extension array type.
   const embeddingArray =
     index.vectorType === "halfvec"
-      ? sql`${sql.array(embeddings, POSTGRES_TEXT_OID)}::text[]::public.halfvec[]`
-      : sql`${sql.array(embeddings, POSTGRES_TEXT_OID)}::text[]::public.vector[]`;
+      ? sql`${embeddings}::text[]::public.halfvec[]`
+      : sql`${embeddings}::text[]::public.vector[]`;
   const rows = await runBatchUpsert(
     sql<BatchUpsertRow[]>`
       select ord, id, status
       from ${sql(index.schema)}.batch_upsert
-      ( ${sql.array(ids, POSTGRES_TEXT_OID)}::text[]::uuid[]
-      , ${sql.array(contents, POSTGRES_TEXT_OID)}::text[]
+      ( ${ids}::text[]::uuid[]
+      , ${contents}::text[]
       , ${sql.json(metas)}
-      , ${sql.array(trees, POSTGRES_TEXT_OID)}::text[]::public.ltree[]
-      , ${sql.array(temporals, POSTGRES_TEXT_OID)}::text[]::tstzrange[]
-      , ${sql.array(names, POSTGRES_TEXT_OID)}::text[]
+      , ${trees}::text[]::public.ltree[]
+      , ${temporals}::text[]::tstzrange[]
+      , ${names}::text[]
       , ${embeddingArray}
       , ${parsedOptions.onConflict}
       )

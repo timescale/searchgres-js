@@ -5,7 +5,7 @@ the runtime-agnostic TypeScript library. Install it
 with `postgres.js` and the AI SDK provider of your choice:
 
 ```bash
-npm install searchgres postgres@3 @ai-sdk/openai
+npm install searchgres postgres @ai-sdk/openai
 ```
 
 `searchgres` is compiled ESM with type declarations. It has no native addon,
@@ -13,9 +13,10 @@ postinstall script, provider credentials, or Bun-only runtime dependency.
 
 The [`postgres`](https://github.com/porsager/postgres) package is the database
 driver. It is a peer dependency: you create the `sql` instance and pass it to
-searchgres.js. searchgres.js requires postgres.js 3.x (`^3.4.9`). postgres.js 4
-removed `sql.array()`, which searchgres.js uses to bind bulk arrays, so
-`openIndex()` rejects a v4 instance with `InvalidConfigError`. searchgres.js uses the provider-agnostic [`ai`](https://ai-sdk.dev) package
+searchgres.js. searchgres.js supports postgres.js 3 (`^3.4.9`) and 4
+(`^4.1.0`).
+
+searchgres.js uses the provider-agnostic [`ai`](https://ai-sdk.dev) package
 but no provider package; replace `@ai-sdk/openai` with Mistral, Google, another
 AI SDK provider, or your own compatible embedding model.
 

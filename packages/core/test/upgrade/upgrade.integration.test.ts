@@ -3,7 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
-import postgres, { type Sql } from "postgres";
+import type { Sql } from "postgres";
 import { createIndex, SCHEMA_FORMAT_VERSION } from "../../src/create-index.ts";
 import {
   bootstrapMigrations,
@@ -37,6 +37,7 @@ import { expectSqlState } from "../support/assert.ts";
 import {
   connect,
   connectToDatabase,
+  createPostgres,
   dropTestSchema,
   randomTestSchema,
   schemaExists,
@@ -915,7 +916,7 @@ test("enforces strict schema ownership (with SET ROLE support for NOLOGIN owners
       const u = new URL(baseUrl);
       u.username = role;
       u.password = "";
-      return postgres(u.toString(), { max: 1, onnotice: () => {} });
+      return createPostgres(u.toString(), { max: 1 });
     };
     ownerSql = connectAs(ownerRole);
     memberSql = connectAs(memberRole);

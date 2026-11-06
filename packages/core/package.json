@@ -59,13 +59,14 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9 || ^4.1.0"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.9",
     "@opentelemetry/context-async-hooks": "^2.10.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/semver": "^7.8.0",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "postgres-v4": "npm:postgres@^4.1.0"
   }
 }

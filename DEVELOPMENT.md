@@ -53,6 +53,17 @@ For a database you operate yourself:
 ./bun run pg:rm
 ```
 
+Core supports postgres.js 3 and 4 (peer range `^3.4.9 || ^4.1.0`). Core takes
+the caller's `sql` instance, so only test connections choose the driver.
+`test:db` runs the core database suite twice: with postgres.js 3 (the
+`postgres` dev dependency) and with postgres.js 4 (the `postgres-v4` alias),
+selected by `SEARCHGRES_TEST_POSTGRES_JS=4`. `test:package` typechecks and runs
+the packed consumer with each major. Bind bulk arrays as plain JS arrays with a
+literal `::text[]` cast in the SQL, then cast to the destination type. Never
+bind an array directly to an extension array type such as `public.ltree[]`:
+postgres.js 3 sends it as `a,b` when the extension was created after the
+connection started.
+
 Core tests retain Node compatibility. CLI unit tests use Bun. Direct integration
 tests use PostgreSQL plus a deterministic fake OpenAI-compatible endpoint and
 exercise the compiled CLI and every MCP tool. The opt-in Compose smoke uses a

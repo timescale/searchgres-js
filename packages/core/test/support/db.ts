@@ -1,4 +1,24 @@
-import postgres, { type Sql } from "postgres";
+import postgresV3, { type Sql } from "postgres";
+import postgresV4 from "postgres-v4";
+
+/**
+ * The postgres.js major version under test. Core supports postgres.js 3 and 4;
+ * CI runs the database suite once with each. Core takes the caller's `sql`
+ * instance, so only the test connections choose the driver.
+ */
+export const POSTGRES_JS_MAJOR =
+  process.env.SEARCHGRES_TEST_POSTGRES_JS === "4" ? 4 : 3;
+
+/** Create a test pool with the postgres.js major version under test. */
+export function createPostgres(
+  url: string,
+  options: { max?: number } = {},
+): Sql {
+  const factory = (POSTGRES_JS_MAJOR === 4
+    ? postgresV4
+    : postgresV3) as unknown as typeof postgresV3;
+  return factory(url, { onnotice: () => {}, ...options });
+}
 
 const DEFAULT_TEST_DATABASE_URL =
   "postgresql://postgres@127.0.0.1:5432/postgres";
@@ -15,10 +35,7 @@ export function connectToDatabase(database: string, max?: number): Sql {
 }
 
 function connectToUrl(url: string, max?: number): Sql {
-  return postgres(url, {
-    onnotice: () => {},
-    ...(max === undefined ? {} : { max }),
-  });
+  return createPostgres(url, max === undefined ? {} : { max });
 }
 
 /** Generate a valid test-only schema name that cannot collide with production. */
