@@ -31,7 +31,7 @@
     "check": "./bun run check:filter-grammar && ./bun run check:sql && ./bun run typecheck && ./bun run lint && ./bun run test:unit",
     "check:full": "./bun run check && ./bun scripts/with-postgres.ts ./bun run test:db",
     "pg:build": "docker build -t searchgres-postgres -f docker/Dockerfile.postgres docker/",
-    "pg:up": "./bun run pg:build && docker run -d --name searchgres-postgres -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:5432:5432 searchgres-postgres",
+    "pg:up": "./bun run pg:build && docker run -d --name searchgres-postgres --shm-size=1g -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:5432:5432 searchgres-postgres",
     "pg:rm": "docker rm -f searchgres-postgres",
     "psql": "psql postgresql://postgres@127.0.0.1:5432/postgres"
   },

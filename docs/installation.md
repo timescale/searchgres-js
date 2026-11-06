@@ -5,14 +5,17 @@ the runtime-agnostic TypeScript library. Install it
 with `postgres.js` and the AI SDK provider of your choice:
 
 ```bash
-npm install searchgres postgres @ai-sdk/openai
+npm install searchgres postgres@3 @ai-sdk/openai
 ```
 
 `searchgres` is compiled ESM with type declarations. It has no native addon,
 postinstall script, provider credentials, or Bun-only runtime dependency.
 
 The [`postgres`](https://github.com/porsager/postgres) package is the database
-driver. searchgres.js uses the provider-agnostic [`ai`](https://ai-sdk.dev) package
+driver. It is a peer dependency: you create the `sql` instance and pass it to
+searchgres.js. searchgres.js requires postgres.js 3.x (`^3.4.9`). postgres.js 4
+removed `sql.array()`, which searchgres.js uses to bind bulk arrays, so
+`openIndex()` rejects a v4 instance with `InvalidConfigError`. searchgres.js uses the provider-agnostic [`ai`](https://ai-sdk.dev) package
 but no provider package; replace `@ai-sdk/openai` with Mistral, Google, another
 AI SDK provider, or your own compatible embedding model.
 
@@ -95,12 +98,19 @@ cd searchgres-js
 docker build -t searchgres-postgres -f docker/Dockerfile.postgres docker/
 
 docker run -d --name searchgres-postgres \
+  --shm-size=1g \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
   -p 127.0.0.1:5432:5432 \
   searchgres-postgres
 ```
 
 Trust authentication is for local development only.
+
+`--shm-size=1g` raises Docker's default 64 MB `/dev/shm`. PostgreSQL index
+builds use shared memory up to `maintenance_work_mem`. A `prism` build fails
+with `could not resize shared memory segment ... No space left on device` when
+`/dev/shm` is not larger than `maintenance_work_mem`. Keep `/dev/shm` above
+`maintenance_work_mem` in any container that runs index builds.
 
 Verify extension availability:
 

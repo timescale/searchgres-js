@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import {
   ConflictError,
+  DimensionMismatchError,
+  EmbeddingProviderError,
+  ExtensionError,
   InvalidConfigError,
+  InvalidIndexError,
   InvalidInputError,
   NotFoundError,
   RateLimitError,
@@ -82,4 +86,49 @@ test("CLI exit codes and safe errors never expose provider/SQL secrets", () => {
     .safeParse({ token: "secret" });
   if (!bad.success)
     expect(JSON.stringify(safeError(bad.error))).not.toContain("secret");
+});
+
+test("safe errors keep catalog facts and add only a failure class", () => {
+  expect(safeError(new InvalidIndexError("docs")).message).toBe(
+    'Schema "docs" is not a searchgres index',
+  );
+  expect(safeError(new DimensionMismatchError(512, 768)).message).toContain(
+    "index expects 512, received 768",
+  );
+  expect(
+    safeError(new ExtensionError("pg_vectorsearch", "0.1.0", "missing"))
+      .message,
+  ).toContain('"pg_vectorsearch" >= 0.1.0');
+  const http = Object.assign(new Error("secret-body"), { statusCode: 404 });
+  expect(
+    safeError(
+      new EmbeddingProviderError("Failed to generate embeddings", {
+        cause: http,
+      }),
+    ),
+  ).toEqual({
+    code: "EMBEDDING_PROVIDER",
+    message: "Failed to generate embeddings (HTTP 404)",
+  });
+  const retried = Object.assign(new Error("secret retry text"), {
+    lastError: Object.assign(new Error("secret"), { code: "ECONNREFUSED" }),
+  });
+  expect(
+    safeError(
+      new EmbeddingProviderError("Failed to generate embeddings", {
+        cause: retried,
+      }),
+    ).message,
+  ).toBe("Failed to generate embeddings (ECONNREFUSED)");
+  const refused = Object.assign(new Error("connect 10.0.0.1:5432 secret"), {
+    code: "ECONNREFUSED",
+  });
+  expect(safeError(refused).message).toBe(
+    "searchgres.js operation failed (ECONNREFUSED); check database connectivity and configuration",
+  );
+  const auth = Object.assign(new Error("password for user secret"), {
+    code: "28P01",
+  });
+  expect(safeError(auth).message).toContain("(SQLSTATE 28P01)");
+  expect(JSON.stringify(safeError(auth))).not.toContain("secret");
 });
