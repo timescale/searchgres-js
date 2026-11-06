@@ -46,7 +46,7 @@ await createIndex(sql, "docs_index", {
   dimensions: 1536,        // required; must match your model
   vectorType: "halfvec",   // "halfvec" (default) | "vector"
   bm25: { textConfig: "english", k1: 1.2, b: 0.75 },
-  hnsw: { m: 16, efConstruction: 64 },
+  vectorIndex: { method: "hnsw", m: 16, efConstruction: 64 },
 });
 ```
 
@@ -57,7 +57,7 @@ await createIndex(sql, "docs_index", {
 | `bm25.textConfig` | `"english"` | Must name an installed text search config. |
 | `bm25.k1` | `1.2` | 0.1–10. |
 | `bm25.b` | `0.75` | 0–1. |
-| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Discriminated union on `method: "hnsw" \| "prism"`. `hnsw` accepts `m` (2–100) and `efConstruction` (4–1000). `prism` accepts optional `nlist` (1–2,000,000) and `targetPages` (1–64). Top-level `hnsw` is accepted as shorthand when `vectorIndex` is omitted. |
+| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Discriminated union on `method: "hnsw" \| "prism"`. `hnsw` accepts `m` (2–100) and `efConstruction` (4–1000). `prism` accepts optional `nlist` (1–2,000,000) and `targetPages` (1–64). |
 
 The optional fourth argument sets runtime budgets for the call itself. Nothing
 in it is persisted or affects the resulting index.
@@ -402,8 +402,8 @@ claiming any queue row or running any query. Compare by identity:
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `vectorIndexStats()` | `VectorIndexStats` | Returns `method`, `indexName`, `indexSizeBytes`, `embeddedRecords`, and for `prism` indexes `prism: { nlist, idealNlist, targetPages, targetEntries, nlevels, postingPages, needsReindex, reindexReason }`. |
-| `reindexVectorIndex(options?)` | `VectorIndexStats` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index and returns updated `VectorIndexStats`. Options: `concurrently?: boolean`, `lockTimeoutMs?: number`, `statementTimeoutMs?: number`. |
+| `vectorIndexStats()` | `VectorIndexStats` | Returns `method`, `indexName`, `indexSizeBytes`, `embeddedRecords`, and for `prism` indexes `prism: { nlist, pinnedNlist, idealNlist, targetPages, targetEntries, nlevels, postingPages, needsReindex, reindexReason }`. |
+| `reindexVectorIndex(options?)` | `VectorIndexStats` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index and returns updated `VectorIndexStats`. Options: `concurrently?: boolean`, `nlist?: number \| "auto"` (`prism` only: pins `nlist` or resets to automatic sizing before rebuilding), `lockTimeoutMs?: number`, `statementTimeoutMs?: number`. |
 
 ### Transactions and lifecycle
 

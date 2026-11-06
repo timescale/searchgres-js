@@ -135,8 +135,7 @@ test("provisioning context validates the schema, shape and catalog literal", () 
     "{{text_config_literal}}",
     "{{bm25_k1_number}}",
     "{{bm25_b_number}}",
-    "{{hnsw_m_int}}",
-    "{{hnsw_ef_construction_int}}",
+    "{{vector_index_with_clause}}",
   ]) {
     assert.throws(() => renderSql(creationOnly, migration.variables));
   }

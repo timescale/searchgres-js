@@ -46,18 +46,6 @@ const bm25Schema = z
   .strict()
   .default(DEFAULT_BM25_CONFIG);
 
-const hnswSchema = z
-  .object({
-    m: z.number().int().min(2).max(100).default(DEFAULT_HNSW_CONFIG.m),
-    efConstruction: z
-      .number()
-      .int()
-      .min(4)
-      .max(1000)
-      .default(DEFAULT_HNSW_CONFIG.efConstruction),
-  })
-  .strict();
-
 const hnswVectorIndexSchema = z
   .object({
     method: z.literal("hnsw"),
@@ -79,30 +67,20 @@ const prismVectorIndexSchema = z
   })
   .strict();
 
-const vectorIndexSchema = z.discriminatedUnion("method", [
-  hnswVectorIndexSchema,
-  prismVectorIndexSchema,
-]);
+const vectorIndexSchema = z
+  .discriminatedUnion("method", [hnswVectorIndexSchema, prismVectorIndexSchema])
+  .default(DEFAULT_VECTOR_INDEX_CONFIG);
 
 const indexConfigSchema = z
   .object({
     dimensions: z.number().int().positive(),
     vectorType: z.enum(["vector", "halfvec"]).default(DEFAULT_VECTOR_TYPE),
     bm25: bm25Schema,
-    hnsw: hnswSchema.optional(),
-    vectorIndex: vectorIndexSchema.optional(),
+    vectorIndex: vectorIndexSchema,
   })
   .strict()
   .superRefine((config, context) => {
-    if (config.hnsw !== undefined && config.vectorIndex !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["vectorIndex"],
-        message: "cannot specify both hnsw and vectorIndex",
-      });
-    }
-    const method = config.vectorIndex?.method ?? "hnsw";
-    if (method === "prism") {
+    if (config.vectorIndex.method === "prism") {
       if (config.dimensions > MAX_PRISM_DIMENSIONS) {
         context.addIssue({
           code: "custom",
@@ -125,36 +103,20 @@ const indexConfigSchema = z
 /** Caller-facing creation config, inferred from the runtime validator. */
 export type IndexConfig = z.input<typeof indexConfigSchema>;
 
-export type VectorType = "vector" | "halfvec";
+/** Fully validated and defaulted creation parameters used to build index DDL. */
+export type NormalizedIndexConfig = z.output<typeof indexConfigSchema>;
+
+export type VectorType = NormalizedIndexConfig["vectorType"];
 export type VectorIndexMethod = "hnsw" | "prism";
 export type VectorIndexConfig = NonNullable<IndexConfig["vectorIndex"]>;
 export type Bm25Config = NonNullable<IndexConfig["bm25"]>;
-export type HnswConfig = NonNullable<IndexConfig["hnsw"]>;
-
-export type NormalizedBm25Config = z.output<typeof bm25Schema>;
-export type NormalizedHnswConfig = z.output<typeof hnswSchema>;
-export type NormalizedVectorIndexConfig =
-  | z.output<typeof hnswVectorIndexSchema>
-  | z.output<typeof prismVectorIndexSchema>;
-
-/** Fully validated and defaulted creation parameters used to build index DDL. */
-export interface NormalizedIndexConfig {
-  readonly dimensions: number;
-  readonly vectorType: VectorType;
-  readonly bm25: NormalizedBm25Config;
-  readonly hnsw: NormalizedHnswConfig;
-  readonly vectorIndex: NormalizedVectorIndexConfig;
-}
-
-const normalizedBrand = Symbol("NormalizedIndexConfig");
+export type NormalizedBm25Config = NormalizedIndexConfig["bm25"];
+export type NormalizedVectorIndexConfig = NormalizedIndexConfig["vectorIndex"];
 
 /** Validate caller input, apply defaults, and freeze the creation parameters. */
 export function normalizeIndexConfig(
-  input: IndexConfig | NormalizedIndexConfig,
+  input: IndexConfig,
 ): NormalizedIndexConfig {
-  if (typeof input === "object" && input !== null && normalizedBrand in input) {
-    return input as NormalizedIndexConfig;
-  }
   const result = indexConfigSchema.safeParse(input);
   if (!result.success) {
     const issues = result.error.issues.map(toValidationIssue);
@@ -168,35 +130,7 @@ export function normalizeIndexConfig(
     });
   }
 
-  const parsed = result.data;
-  const vectorIndex: NormalizedVectorIndexConfig =
-    parsed.vectorIndex !== undefined
-      ? parsed.vectorIndex
-      : {
-          method: "hnsw",
-          m: parsed.hnsw?.m ?? DEFAULT_HNSW_CONFIG.m,
-          efConstruction:
-            parsed.hnsw?.efConstruction ?? DEFAULT_HNSW_CONFIG.efConstruction,
-        };
-  const hnsw: NormalizedHnswConfig =
-    vectorIndex.method === "hnsw"
-      ? { m: vectorIndex.m, efConstruction: vectorIndex.efConstruction }
-      : (parsed.hnsw ?? { ...DEFAULT_HNSW_CONFIG });
-
-  const normalized: NormalizedIndexConfig = {
-    dimensions: parsed.dimensions,
-    vectorType: parsed.vectorType,
-    bm25: parsed.bm25,
-    hnsw,
-    vectorIndex,
-  };
-  Object.defineProperty(normalized, normalizedBrand, {
-    value: true,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  });
-  return deepFreeze(normalized);
+  return deepFreeze(result.data);
 }
 
 function deepFreeze<T extends object>(value: T): T {

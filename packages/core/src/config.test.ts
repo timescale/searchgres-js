@@ -13,13 +13,14 @@ test("config defaults match the extension defaults", () => {
     dimensions: 1536,
     vectorType: "halfvec",
     bm25: { textConfig: "english", k1: 1.2, b: 0.75 },
-    hnsw: { m: 16, efConstruction: 64 },
     vectorIndex: { method: "hnsw", m: 16, efConstruction: 64 },
   });
   assert.equal(Object.isFrozen(config), true);
   assert.equal(Object.isFrozen(config.bm25), true);
-  assert.equal(Object.isFrozen(config.hnsw), true);
   assert.equal(Object.isFrozen(config.vectorIndex), true);
+
+  // Normalized configs can be shallow-copied or re-normalized without losing validity.
+  assert.deepEqual(normalizeIndexConfig({ ...config }), config);
 });
 
 test("custom values at upstream boundaries are accepted", () => {
@@ -27,19 +28,27 @@ test("custom values at upstream boundaries are accepted", () => {
     dimensions: 1,
     vectorType: "vector",
     bm25: { textConfig: "custom.english", k1: 0.1, b: 0 },
-    hnsw: { m: 2, efConstruction: 4 },
+    vectorIndex: { method: "hnsw", m: 2, efConstruction: 4 },
   });
   assert.equal(low.bm25.k1, 0.1);
-  assert.equal(low.hnsw.m, 2);
+  assert.deepEqual(low.vectorIndex, {
+    method: "hnsw",
+    m: 2,
+    efConstruction: 4,
+  });
 
   const high = normalizeIndexConfig({
     dimensions: 4000,
     vectorType: "halfvec",
     bm25: { k1: 10, b: 1 },
-    hnsw: { m: 100, efConstruction: 1000 },
+    vectorIndex: { method: "hnsw", m: 100, efConstruction: 1000 },
   });
   assert.equal(high.dimensions, 4000);
-  assert.equal(high.hnsw.efConstruction, 1000);
+  assert.deepEqual(high.vectorIndex, {
+    method: "hnsw",
+    m: 100,
+    efConstruction: 1000,
+  });
 
   const prismDefault = normalizeIndexConfig({
     dimensions: 1968,
@@ -60,7 +69,7 @@ test("custom values at upstream boundaries are accepted", () => {
   });
 });
 
-test("vector and halfvec enforce their HNSW dimension ceilings", () => {
+test("vector and halfvec enforce their HNSW and PRISM dimension ceilings", () => {
   assertInvalid(
     {
       dimensions: 2001,
@@ -86,33 +95,23 @@ test("vector and halfvec enforce their HNSW dimension ceilings", () => {
     "dimensions",
     /between 1 and 1968 for prism/,
   );
-  assertInvalid(
-    {
-      dimensions: 1536,
-      hnsw: { m: 16 },
-      vectorIndex: { method: "prism" },
-    },
-    "vectorIndex",
-    /cannot specify both hnsw and vectorIndex/,
-  );
-  assertInvalid(
-    {
-      dimensions: 1536,
-      hnsw: { m: 16 },
-      vectorIndex: { method: "hnsw" },
-    },
-    "vectorIndex",
-    /cannot specify both hnsw and vectorIndex/,
-  );
 });
 
 test("numeric storage parameters enforce upstream ranges and integer kinds", () => {
   for (const [override, path] of [
     [{ bm25: { k1: 0.09 } }, "bm25.k1"],
     [{ bm25: { b: 1.01 } }, "bm25.b"],
-    [{ hnsw: { m: 1 } }, "hnsw.m"],
-    [{ hnsw: { efConstruction: 1001 } }, "hnsw.efConstruction"],
-    [{ hnsw: { m: 16.5 } }, "hnsw.m"],
+    [{ vectorIndex: { method: "hnsw", m: 1 } }, "vectorIndex.m"],
+    [
+      { vectorIndex: { method: "hnsw", efConstruction: 1001 } },
+      "vectorIndex.efConstruction",
+    ],
+    [{ vectorIndex: { method: "hnsw", m: 16.5 } }, "vectorIndex.m"],
+    [{ vectorIndex: { method: "prism", nlist: 0 } }, "vectorIndex.nlist"],
+    [
+      { vectorIndex: { method: "prism", targetPages: 65 } },
+      "vectorIndex.targetPages",
+    ],
   ] as const) {
     assertInvalid(
       {
@@ -138,12 +137,12 @@ test("text config names reject ambiguous strings", () => {
 test("runtime input rejects explicit null instead of silently defaulting it", () => {
   for (const override of [
     { bm25: null },
-    { hnsw: null },
+    { vectorIndex: null },
     { bm25: { k1: null } },
     { bm25: { b: null } },
     { bm25: { textConfig: null } },
-    { hnsw: { m: null } },
-    { hnsw: { efConstruction: null } },
+    { vectorIndex: { method: "hnsw", m: null } },
+    { vectorIndex: { method: "hnsw", efConstruction: null } },
   ]) {
     assert.throws(
       () =>

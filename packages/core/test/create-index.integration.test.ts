@@ -23,6 +23,7 @@ import { expectSqlState } from "./support/assert.ts";
 import {
   columnType,
   connect,
+  connectToDatabase,
   dropTestSchema,
   indexOpclass,
   indexReloptions,
@@ -257,7 +258,7 @@ test("creates the configured schema shape and search indexes", async () => {
     await createIndex(sql, schema, {
       dimensions: 4,
       bm25: { k1: 1.5, b: 0.5 },
-      hnsw: { m: 8, efConstruction: 32 },
+      vectorIndex: { method: "hnsw", m: 8, efConstruction: 32 },
     });
 
     assert.equal(
@@ -501,6 +502,7 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
     assert.equal(emptyStats.indexName, "record_embedding_prism_idx");
     assert.equal(emptyStats.embeddedRecords, 0);
     assert.equal(emptyStats.prism?.nlist, 1);
+    assert.equal(emptyStats.prism?.pinnedNlist, null);
     assert.equal(emptyStats.prism?.idealNlist, 1);
     assert.equal(emptyStats.prism?.needsReindex, false);
     assert.equal(emptyStats.prism?.reindexReason, null);
@@ -515,6 +517,7 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
     const postIngestStats = await prismIndex.vectorIndexStats();
     assert.equal(postIngestStats.embeddedRecords, 4);
     assert.equal(postIngestStats.prism?.nlist, 1);
+    assert.equal(postIngestStats.prism?.pinnedNlist, null);
     assert.equal(postIngestStats.prism?.idealNlist, 2);
     assert.equal(postIngestStats.prism?.needsReindex, true);
     assert.equal(
@@ -525,16 +528,50 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
     const reindexedStats = await prismIndex.reindexVectorIndex();
     assert.equal(reindexedStats.embeddedRecords, 4);
     assert.equal(reindexedStats.prism?.nlist, 2);
+    assert.equal(reindexedStats.prism?.pinnedNlist, null);
     assert.equal(reindexedStats.prism?.needsReindex, false);
     assert.equal(reindexedStats.prism?.reindexReason, null);
 
-    const concurrentStats = await prismIndex.reindexVectorIndex({
-      concurrently: true,
-      lockTimeoutMs: 5_000,
-      statementTimeoutMs: 30_000,
-    });
-    assert.equal(concurrentStats.prism?.nlist, 2);
-    assert.equal(concurrentStats.prism?.needsReindex, false);
+    // Pin nlist to 1: pinnedNlist (1) != idealNlist (2), and needsReindex is false
+    // because a plain REINDEX cannot grow past the pinned nlist=1.
+    const pinnedOneStats = await prismIndex.reindexVectorIndex({ nlist: 1 });
+    assert.equal(pinnedOneStats.prism?.nlist, 1);
+    assert.equal(pinnedOneStats.prism?.pinnedNlist, 1);
+    assert.equal(pinnedOneStats.prism?.idealNlist, 2);
+    assert.equal(pinnedOneStats.prism?.needsReindex, false);
+    assert.equal(pinnedOneStats.prism?.reindexReason, null);
+
+    // Reset nlist back to "auto" and rebuild concurrently while verifying session timeouts are preserved.
+    const singlePool = connectToDatabase(sql.options.database, 1);
+    try {
+      await singlePool`select pg_catalog.set_config('lock_timeout', '4321ms', false)`;
+      await singlePool`select pg_catalog.set_config('statement_timeout', '8765ms', false)`;
+      const singlePrism = await openIndex(singlePool, prismHalfvecSchema, {
+        embedding: noEmbedding,
+      });
+      const concurrentStats = await singlePrism.reindexVectorIndex({
+        concurrently: true,
+        nlist: "auto",
+        lockTimeoutMs: 5_000,
+        statementTimeoutMs: 30_000,
+      });
+      assert.equal(concurrentStats.prism?.nlist, 2);
+      assert.equal(concurrentStats.prism?.pinnedNlist, null);
+      assert.equal(concurrentStats.prism?.idealNlist, 2);
+      assert.equal(concurrentStats.prism?.needsReindex, false);
+
+      const [afterTimeouts] = await singlePool<
+        { readonly lock_timeout: string; readonly statement_timeout: string }[]
+      >`
+        select
+          pg_catalog.current_setting('lock_timeout') as lock_timeout
+        , pg_catalog.current_setting('statement_timeout') as statement_timeout
+      `;
+      assert.equal(afterTimeouts?.lock_timeout, "4321ms");
+      assert.equal(afterTimeouts?.statement_timeout, "8765ms");
+    } finally {
+      await singlePool.end();
+    }
 
     // Custom prism reloptions on vector(4).
     await createIndex(sql, prismVectorSchema, {

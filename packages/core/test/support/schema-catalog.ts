@@ -12,7 +12,7 @@ export const SCHEMA_FORMAT_CASES = [
       dimensions: 8,
       vectorType: "vector",
       bm25: { textConfig: "simple", k1: 1.7, b: 0.5 },
-      hnsw: { m: 8, efConstruction: 40 },
+      vectorIndex: { method: "hnsw", m: 8, efConstruction: 40 },
     },
   },
   {
@@ -21,7 +21,7 @@ export const SCHEMA_FORMAT_CASES = [
       dimensions: 8,
       vectorType: "halfvec",
       bm25: { textConfig: "simple", k1: 1.7, b: 0.5 },
-      hnsw: { m: 8, efConstruction: 40 },
+      vectorIndex: { method: "hnsw", m: 8, efConstruction: 40 },
     },
   },
 ] as const satisfies readonly { name: string; config: IndexConfig }[];

@@ -59,7 +59,7 @@ Sensible defaults are applied; override them only if you have a reason.
 | `bm25.textConfig` | `"english"` | PostgreSQL text search configuration for BM25. |
 | `bm25.k1` | `1.2` | BM25 term-frequency saturation. |
 | `bm25.b` | `0.75` | BM25 length normalization. |
-| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Vector index method (`"hnsw"` or `"prism"`) and build parameters (`m`/`efConstruction` for `hnsw`; optional `nlist`/`targetPages` for `prism`). Top-level `hnsw` is also accepted as shorthand when `vectorIndex` is omitted. |
+| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Vector index method (`"hnsw"` or `"prism"`) and build parameters (`m`/`efConstruction` for `hnsw`; optional `nlist`/`targetPages` for `prism`). |
 
 ## Create an index
 
@@ -80,7 +80,7 @@ await createIndex(sql, "docs_index", {
   dimensions: 1536,
   vectorType: "halfvec",
   bm25: { textConfig: "english", k1: 1.2, b: 0.75 },
-  hnsw: { m: 16, efConstruction: 64 },
+  vectorIndex: { method: "hnsw", m: 16, efConstruction: 64 },
 });
 ```
 

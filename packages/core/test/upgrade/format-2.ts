@@ -80,5 +80,19 @@ export async function createFormat2Index(
   config: IndexConfig,
 ): Promise<void> {
   const v032 = await getV032Core();
-  await v032.createIndex(sql, schema, config);
+  const { vectorIndex, ...rest } = config;
+  const v032Config = {
+    ...rest,
+    ...(vectorIndex?.method === "hnsw"
+      ? {
+          hnsw: {
+            ...(vectorIndex.m !== undefined ? { m: vectorIndex.m } : {}),
+            ...(vectorIndex.efConstruction !== undefined
+              ? { efConstruction: vectorIndex.efConstruction }
+              : {}),
+          },
+        }
+      : {}),
+  };
+  await v032.createIndex(sql, schema, v032Config as never);
 }

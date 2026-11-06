@@ -27,8 +27,6 @@ const variableNames = [
   "text_config_literal",
   "bm25_k1_number",
   "bm25_b_number",
-  "hnsw_m_int",
-  "hnsw_ef_construction_int",
   "bm25_index_literal",
 ] as const;
 type VariableName = (typeof variableNames)[number];
@@ -159,8 +157,6 @@ export function indexSqlContext(
       text_config_literal: catalogLiteral(textConfigLiteral),
       bm25_k1_number: sqlNumber(normalized.bm25.k1),
       bm25_b_number: sqlNumber(normalized.bm25.b),
-      hnsw_m_int: sqlNumber(normalized.hnsw.m, true),
-      hnsw_ef_construction_int: sqlNumber(normalized.hnsw.efConstruction, true),
       bm25_index_literal: sqlLiteral(`${name}.record_content_bm25_idx`),
     }),
   });
