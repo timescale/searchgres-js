@@ -174,7 +174,7 @@ export async function assertPrismPgvectorCompat(
     throw new ExtensionError(
       PRISM_EXTENSION_REQUIREMENT.name,
       PRISM_EXTENSION_REQUIREMENT.minimumVersion,
-      "permission_denied",
+      "incomplete_setup",
     );
   }
 }
@@ -311,6 +311,11 @@ function toExtensionInfo(
 }
 
 function versionAtLeast(actual: string, minimum: string): boolean {
-  const parsed = semver.coerce(actual);
-  return parsed !== null && semver.gte(parsed, minimum);
+  const actualVersion = semver.coerce(actual);
+  const minimumVersion = semver.coerce(minimum);
+  return (
+    actualVersion !== null &&
+    minimumVersion !== null &&
+    actualVersion.compare(minimumVersion) >= 0
+  );
 }

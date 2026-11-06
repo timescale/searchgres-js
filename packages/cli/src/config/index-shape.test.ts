@@ -42,6 +42,6 @@ test("configured index shape reports configured and actual storage", () => {
       { ...configured, vectorIndex: "hnsw" },
     ),
   ).toThrow(
-    'Index "docs" does not match the config: configured halfvec(768), database has halfvec(768) (hnsw vs prism)',
+    'Index "docs" does not match the config: configured halfvec(768) [hnsw], database has halfvec(768) [prism]',
   );
 });

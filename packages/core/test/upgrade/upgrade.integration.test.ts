@@ -574,6 +574,7 @@ test("direct, sequential, and skipped-version upgrades with trigger-aware backfi
       const context = migrationSqlContext(sequentialSchema, {
         vectorType: "halfvec",
         dimensions: 4,
+        vectorIndex: "hnsw",
       });
       const applied = await runIndexMigrations(
         tx,
@@ -594,6 +595,7 @@ test("direct, sequential, and skipped-version upgrades with trigger-aware backfi
       const context = migrationSqlContext(sequentialSchema, {
         vectorType: "halfvec",
         dimensions: 4,
+        vectorIndex: "hnsw",
       });
       const applied = await runIndexMigrations(
         tx,
@@ -613,6 +615,7 @@ test("direct, sequential, and skipped-version upgrades with trigger-aware backfi
       const context = migrationSqlContext(skippedSchema, {
         vectorType: "halfvec",
         dimensions: 4,
+        vectorIndex: "hnsw",
       });
       await executeMigrationFile(
         tx,
@@ -1011,6 +1014,7 @@ test("enforces strict schema ownership (with SET ROLE support for NOLOGIN owners
     const sigChangeContext = migrationSqlContext(schema, {
       vectorType: "halfvec",
       dimensions: 4,
+      vectorIndex: "hnsw",
     });
     // The migration SQL does NOT hardcode readerRole: it inspects pg_proc.proacl
     // via pg_catalog.aclexplode before dropping the old signature, then replays
@@ -1218,6 +1222,7 @@ test("rolls back late failures after ledger creation and idempotent replacement,
           const context = migrationSqlContext(schema, {
             vectorType: "halfvec",
             dimensions: 4,
+            vectorIndex: "hnsw",
           });
           await executeMigrationFile(
             tx,

@@ -464,30 +464,23 @@ export async function reindexVectorIndex(
   const indexName = vectorIndexNameForMethod(index.vectorIndex);
   const { sql } = index;
 
+  if (
+    "savepoint" in sql ||
+    typeof (sql as postgres.Sql).begin !== "function" ||
+    typeof (sql as postgres.Sql).reserve !== "function"
+  ) {
+    throw new InvalidInputError(
+      "Cannot run reindexVectorIndex inside a transaction",
+    );
+  }
+  const pool = sql as postgres.Sql;
+
   if (concurrently) {
-    if (
-      "savepoint" in sql ||
-      typeof (sql as postgres.Sql).reserve !== "function"
-    ) {
-      throw new InvalidInputError(
-        "Cannot run REINDEX INDEX CONCURRENTLY inside a transaction",
-      );
-    }
-    if (lockTimeoutMs === undefined && statementTimeoutMs === undefined) {
-      await applyPrismNlistOption(sql, index.schema, indexName, nlist);
-      await runSql(
-        sql`reindex index concurrently ${sql(index.schema)}.${sql(indexName)}`,
-        {
-          spanName: "reindexVectorIndex",
-          dbOperationName: "REINDEX",
-          namespace: index.schema,
-        },
-      );
-    } else {
-      const reserved = await (sql as postgres.Sql).reserve();
-      let priorLockTimeout: string | undefined;
-      let priorStatementTimeout: string | undefined;
-      try {
+    const reserved = await pool.reserve();
+    let priorLockTimeout: string | undefined;
+    let priorStatementTimeout: string | undefined;
+    try {
+      if (lockTimeoutMs !== undefined || statementTimeoutMs !== undefined) {
         const [prior] = await runSql(
           reserved<
             {
@@ -507,79 +500,51 @@ export async function reindexVectorIndex(
         );
         priorLockTimeout = prior?.lock_timeout;
         priorStatementTimeout = prior?.statement_timeout;
-        if (lockTimeoutMs !== undefined) {
-          await runSql(
-            reserved`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, false)`,
-            {
-              spanName: "setLockTimeout",
-              dbOperationName: "SET",
-              namespace: index.schema,
-            },
-          );
-        }
-        if (statementTimeoutMs !== undefined) {
-          await runSql(
-            reserved`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, false)`,
-            {
-              spanName: "setStatementTimeout",
-              dbOperationName: "SET",
-              namespace: index.schema,
-            },
-          );
-        }
-        await applyPrismNlistOption(reserved, index.schema, indexName, nlist);
-        await runSql(
-          reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
-          {
-            spanName: "reindexVectorIndex",
-            dbOperationName: "REINDEX",
-            namespace: index.schema,
-          },
+        await applyReindexTimeouts(
+          reserved,
+          index.schema,
+          lockTimeoutMs,
+          statementTimeoutMs,
+          false,
         );
-      } finally {
-        try {
-          if (lockTimeoutMs !== undefined && priorLockTimeout !== undefined) {
-            await reserved`select pg_catalog.set_config('lock_timeout', ${priorLockTimeout}, false)`;
-          }
-          if (
-            statementTimeoutMs !== undefined &&
-            priorStatementTimeout !== undefined
-          ) {
-            await reserved`select pg_catalog.set_config('statement_timeout', ${priorStatementTimeout}, false)`;
-          }
-        } finally {
-          reserved.release();
+      }
+      await applyPrismNlistOption(reserved, index.schema, indexName, nlist);
+      await runSql(
+        reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
+        {
+          spanName: "reindexVectorIndex",
+          dbOperationName: "REINDEX",
+          namespace: index.schema,
+        },
+      );
+    } finally {
+      try {
+        if (lockTimeoutMs !== undefined && priorLockTimeout !== undefined) {
+          await reserved`select pg_catalog.set_config('lock_timeout', ${priorLockTimeout}, false)`;
         }
+        if (
+          statementTimeoutMs !== undefined &&
+          priorStatementTimeout !== undefined
+        ) {
+          await reserved`select pg_catalog.set_config('statement_timeout', ${priorStatementTimeout}, false)`;
+        }
+      } finally {
+        reserved.release();
       }
     }
   } else if (
-    (nlist !== undefined ||
-      lockTimeoutMs !== undefined ||
-      statementTimeoutMs !== undefined) &&
-    !("savepoint" in sql) &&
-    typeof (sql as postgres.Sql).begin === "function"
+    nlist !== undefined ||
+    lockTimeoutMs !== undefined ||
+    statementTimeoutMs !== undefined
   ) {
-    await (sql as postgres.Sql).begin(async (tx) => {
-      if (lockTimeoutMs !== undefined) {
-        await runSql(
-          tx`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true)`,
-          {
-            spanName: "setLockTimeout",
-            dbOperationName: "SET",
-            namespace: index.schema,
-          },
-        );
-      }
-      if (statementTimeoutMs !== undefined) {
-        await runSql(
-          tx`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true)`,
-          {
-            spanName: "setStatementTimeout",
-            dbOperationName: "SET",
-            namespace: index.schema,
-          },
-        );
-      }
+    await pool.begin(async (tx) => {
+      await applyReindexTimeouts(
+        tx,
+        index.schema,
+        lockTimeoutMs,
+        statementTimeoutMs,
+        true,
+      );
       await applyPrismNlistOption(tx, index.schema, indexName, nlist);
       await runSql(tx`reindex index ${tx(index.schema)}.${tx(indexName)}`, {
         spanName: "reindexVectorIndex",
@@ -588,28 +553,7 @@ export async function reindexVectorIndex(
       });
     });
   } else {
-    if (lockTimeoutMs !== undefined) {
-      await runSql(
-        sql`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, true)`,
-        {
-          spanName: "setLockTimeout",
-          dbOperationName: "SET",
-          namespace: index.schema,
-        },
-      );
-    }
-    if (statementTimeoutMs !== undefined) {
-      await runSql(
-        sql`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, true)`,
-        {
-          spanName: "setStatementTimeout",
-          dbOperationName: "SET",
-          namespace: index.schema,
-        },
-      );
-    }
-    await applyPrismNlistOption(sql, index.schema, indexName, nlist);
-    await runSql(sql`reindex index ${sql(index.schema)}.${sql(indexName)}`, {
+    await runSql(pool`reindex index ${pool(index.schema)}.${pool(indexName)}`, {
       spanName: "reindexVectorIndex",
       dbOperationName: "REINDEX",
       namespace: index.schema,
@@ -617,6 +561,35 @@ export async function reindexVectorIndex(
   }
 
   return vectorIndexStats(index);
+}
+
+async function applyReindexTimeouts(
+  sql: postgres.ISql,
+  schema: string,
+  lockTimeoutMs: number | undefined,
+  statementTimeoutMs: number | undefined,
+  isLocal: boolean,
+): Promise<void> {
+  if (lockTimeoutMs !== undefined) {
+    await runSql(
+      sql`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, ${isLocal})`,
+      {
+        spanName: "setLockTimeout",
+        dbOperationName: "SET",
+        namespace: schema,
+      },
+    );
+  }
+  if (statementTimeoutMs !== undefined) {
+    await runSql(
+      sql`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, ${isLocal})`,
+      {
+        spanName: "setStatementTimeout",
+        dbOperationName: "SET",
+        namespace: schema,
+      },
+    );
+  }
 }
 
 function throwInvalidInput(error: z.ZodError): never {

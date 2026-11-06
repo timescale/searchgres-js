@@ -243,6 +243,7 @@ export class UnsupportedServerError extends SearchgresError {
 }
 
 export type ExtensionErrorReason =
+  | "incomplete_setup"
   | "missing"
   | "permission_denied"
   | "too_old"
@@ -268,7 +269,9 @@ export class ExtensionError extends SearchgresError {
         ? "; install it before connecting or grant CREATE EXTENSION"
         : reason === "wrong_schema"
           ? "; searchgres requires it in the public schema"
-          : "";
+          : reason === "incomplete_setup"
+            ? "; run SELECT public.pg_vectorsearch_setup_pgvector_compat() as a superuser"
+            : "";
     super(
       "EXTENSION",
       `PostgreSQL extension ${JSON.stringify(extension)} >= ${minimumVersion} is required (${reason}${detail}${guidance})`,

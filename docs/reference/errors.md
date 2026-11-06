@@ -140,10 +140,10 @@ search with `fulltext`, `filter`, or a precomputed `vector` instead.
 
 ### `ExtensionError` (`EXTENSION`)
 
-A required extension is missing, too old, unavailable, or installed outside
-`public`. Carries `extension`, `minimumVersion`, `foundVersion`, and `reason`
-(`"missing" | "too_old" | "unavailable" | "permission_denied" |
-"wrong_schema"`).
+A required extension is missing, too old, unavailable, installed outside
+`public`, or missing required cross-extension operator family wiring. Carries
+`extension`, `minimumVersion`, `foundVersion`, and `reason` (`"incomplete_setup" |
+"missing" | "too_old" | "unavailable" | "permission_denied" | "wrong_schema"`).
 
 **Recover:** install/upgrade the extension in `public`, or grant the connecting
 role `CREATE EXTENSION`. See [Install searchgres.js](../installation.md).

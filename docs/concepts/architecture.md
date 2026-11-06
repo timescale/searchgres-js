@@ -8,7 +8,7 @@ solves retrieval mechanics while leaving application policy in the application.
 | searchgres.js owns | Your application owns |
 | --- | --- |
 | Index schema and schema-local SQL routines | Source documents and chunking |
-| BM25, HNSW, GiST, and GIN indexes | Embedding model and provider credentials |
+| BM25, HNSW/PRISM, GiST, and GIN indexes | Embedding model and provider credentials |
 | Hybrid RRF and structured filter execution | PostgreSQL connection lifecycle |
 | Query embedding orchestration | Authentication, authorization, and tenancy policy |
 | Database-backed embedding queue and worker | Retrieval prompts and answer generation |
@@ -45,7 +45,7 @@ keeping integrity triggers effective for every writer.
 
 Database-native primitives do the specialized work:
 
-- `pgvector` and HNSW for cosine retrieval;
+- `pgvector` (HNSW) and optional `pg_vectorsearch` (PRISM) for cosine retrieval;
 - `pg_textsearch` for BM25;
 - `ltree` and GiST for hierarchical scope;
 - `tstzrange` and GiST for represented time;

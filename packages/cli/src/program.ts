@@ -169,7 +169,12 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
       .command("reindex")
       .description("rebuild the vector index")
       .option("--concurrently", "run REINDEX INDEX CONCURRENTLY")
-      .option("--nlist <n|auto>", "pin prism nlist or reset to auto"),
+      .option("--nlist <n|auto>", "pin prism nlist or reset to auto")
+      .option("--lock-timeout <duration>", "lock wait timeout (e.g. 5s, 0ms)")
+      .option(
+        "--statement-timeout <duration>",
+        "statement timeout (e.g. 30s, 0ms)",
+      ),
     "vector-index reindex",
   );
 

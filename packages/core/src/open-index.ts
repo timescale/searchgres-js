@@ -176,7 +176,7 @@ export class Index implements TransactionIndex {
     schema: string;
     vectorType: "vector" | "halfvec";
     dimensions: number;
-    vectorIndex?: VectorIndexMethod;
+    vectorIndex: VectorIndexMethod;
     embedding: EmbeddingModel;
     truncate: Truncator;
   }) {
@@ -184,7 +184,7 @@ export class Index implements TransactionIndex {
     this.schema = options.schema;
     this.vectorType = options.vectorType;
     this.dimensions = options.dimensions;
-    this.vectorIndex = options.vectorIndex ?? "hnsw";
+    this.vectorIndex = options.vectorIndex;
     this.embedding = options.embedding;
     this.truncate = options.truncate;
   }

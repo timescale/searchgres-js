@@ -229,10 +229,6 @@ interface VectorIndexOpclassRow {
   readonly has_cosine_amop: boolean;
 }
 
-export interface ValidatedIndexShape extends StoredIndexShape {
-  readonly vectorIndex: VectorIndexMethod;
-}
-
 /**
  * Inspect the index's stored embedding column and cosine ANN index (`hnsw` or
  * `prism`) in the catalog and return its validated vector type, dimensions, and
@@ -241,7 +237,7 @@ export interface ValidatedIndexShape extends StoredIndexShape {
 export async function readIndexShape(
   sql: postgres.ISql,
   schema: string,
-): Promise<ValidatedIndexShape> {
+): Promise<StoredIndexShape> {
   const embedding = await readEmbeddingColumn(sql, schema);
   if (embedding.type_schema !== "public") {
     throw new InvalidIndexError(schema);
@@ -365,7 +361,7 @@ async function readVectorIndexOpclass(
       and c.relname in ('record_embedding_hnsw_idx', 'record_embedding_prism_idx')
     `,
     {
-      spanName: "readHnswOpclass",
+      spanName: "readVectorIndexOpclass",
       dbOperationName: "SELECT",
       namespace: schema,
     },

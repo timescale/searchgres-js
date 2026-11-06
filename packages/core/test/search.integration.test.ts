@@ -384,6 +384,18 @@ test("parameterized semantic and keyword query shapes retain HNSW and BM25 index
       assert.equal(semanticHits.length, 2);
       assert.equal(semanticHits[0]?.content, "dragonfruit semantic target");
 
+      const filteredSemanticHits = await prismIndex.search({
+        vector: [1, 0, 0, 0],
+        filter: { tree: "docs" },
+        semanticThreshold: 0.5,
+        limit: 2,
+      });
+      assert.equal(filteredSemanticHits.length, 2);
+      assert.equal(
+        filteredSemanticHits[0]?.content,
+        "dragonfruit semantic target",
+      );
+
       const hybridHits = await prismIndex.search({
         fulltext: "dragonfruit",
         vector: [1, 0, 0, 0],

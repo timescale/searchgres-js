@@ -36,6 +36,7 @@ searchgres.js targets **PostgreSQL 18** and requires three extensions:
 | [`pgvector`](https://github.com/pgvector/pgvector) | `vector` / `halfvec` columns and HNSW cosine indexes | 0.8.0 |
 | [`pg_textsearch`](https://github.com/timescale/pg_textsearch) | BM25 index and ranking | 1.4.0 |
 | `ltree` | Hierarchical tree paths (ships with PostgreSQL) | 1.3.0 |
+| [`pg_vectorsearch`](https://github.com/timescale/pg_vectorsearch) *(optional)* | PRISM cosine indexes (required only when `vectorIndex.method === "prism"`) | 0.1.0 |
 
 Two requirements are worth calling out up front:
 
