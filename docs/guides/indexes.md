@@ -28,7 +28,7 @@ embedding writes fail with a `DimensionMismatchError`.
 
 Dimension limits depend on the chosen vector index access method:
 - **HNSW (`pgvector`, default)**: up to **4000** for `halfvec`, **2000** for `vector`.
-- **PRISM (`pg_vectorsearch`)**: up to **1968** for both `halfvec` and `vector`.
+- **PRISM (`pg_vectorsearch`, experimental)**: up to **1968** for both `halfvec` and `vector`.
 
 Both use cosine distance.
 
@@ -45,11 +45,81 @@ await createIndex(sql, "docs_index", {
 });
 ```
 
-Keep three `prism` characteristics in mind:
-1. **Empty-table creation and reindexing**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single partition (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`) so `prism` partitions clusters from the loaded vectors. Use `await index.vectorIndexStats()` to check `prism.needsReindex` (`"bootstrap_single_cluster"` or `"cluster_drift"`), compare `prism.pinnedNlist` against `prism.idealNlist`, and pass `{ nlist: number | "auto" }` to `reindexVectorIndex()` to repin or reset `nlist`. See [Recover from a failed concurrent rebuild](#recover-from-a-failed-concurrent-rebuild).
-2. **Filtered vector search**: `hnsw` uses `hnsw.iterative_scan = 'strict_order'` to continue walking the graph when `WHERE` filters discard rows. `prism` sizes a fixed top-k buffer up front and post-filters, so highly selective filters can return fewer than `limit` rows.
+> **Experimental.** `prism` support is experimental because
+> [`pg_vectorsearch`](https://github.com/timescale/pg_vectorsearch) is not
+> GA. pg_vectorsearch describes itself as alpha, meant for testing and not
+> production, and upgrades between its prereleases can require dropping and
+> recreating the extension and its indexes. Until pg_vectorsearch is GA, the
+> searchgres `prism` option and its behavior can change or be removed in a
+> minor release. Use `hnsw` for production indexes.
+
+Keep these `prism` characteristics in mind:
+
+1. **Rebuild after the first bulk load**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single list (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`). See [Evaluate and maintain a `prism` index](#evaluate-and-maintain-a-prism-index).
+2. **Filtered vector search can return zero rows**: `hnsw` uses `hnsw.iterative_scan = 'strict_order'` to continue walking the graph when `WHERE` filters discard rows. `prism` sizes a fixed top-k buffer up front and filters afterwards. A selective filter (for example, a tree or metadata filter that matches a few hundred records in a large index) can return fewer than `limit` rows, or none. Semantic-only search has no searchgres option to widen the scan. For selective filters, use hybrid search with a larger `candidateLimit` (the BM25 arm is not affected), or use `hnsw`.
 3. **Dimension ceiling**: `prism` supports up to 1,968 dimensions for both `vector` and `halfvec`.
 4. **Shared memory for builds**: a `prism` build or rebuild uses shared memory up to `maintenance_work_mem`. In Docker, the default 64 MB `/dev/shm` is too small for the default 64 MB `maintenance_work_mem`, and the build fails with `could not resize shared memory segment ... No space left on device`. Run the container with a larger `--shm-size` (or Compose `shm_size`), for example `1g`. See [Installation](../installation.md#database-only-setup-with-docker).
+
+### Evaluate and maintain a `prism` index
+
+searchgres does not report `prism` health. Use pg_vectorsearch's own
+inspection functions and guidance instead. They are pg_vectorsearch's API, so
+they can change before pg_vectorsearch is GA. The guidance below matches
+pg_vectorsearch 0.1.0.
+
+`prism` divides vectors into `nlist` lists. A rebuild sizes `nlist` from the
+row count at build time:
+`nlist = max(rows / target_entries, sqrt(rows))`, where `target_entries` is
+the size a list should rest at. New rows go into existing lists, and lists do
+not split on their own. As the table grows, lists get longer and each query
+reads more of them.
+
+Inspect the effective settings, including the `nlist` the build chose and the
+derived `target_entries`:
+
+```sql
+select name, setting, source
+from public.prism_index_settings('docs_index.record_embedding_prism_idx'::pg_catalog.regclass);
+```
+
+Compare the actual list sizes with `target_entries`. Entries can add up to
+more than the row count, because pg_vectorsearch stores a vector near a list
+boundary in two lists:
+
+```sql
+select
+  count(*) as lists
+, round(avg(entries)) as avg_entries
+, max(entries) as max_entries
+from
+(
+  select cluster_id, sum(entry_count - dead_count) as entries
+  from public.prism_posting_pages('docs_index.record_embedding_prism_idx'::pg_catalog.regclass)
+  where not tombstoned
+  group by cluster_id
+) l;
+```
+
+Rebuild with `await index.reindexVectorIndex()` (or `searchgres vector-index reindex`):
+
+- after the first bulk load (`nlist` is `1`);
+- when `avg_entries` is well above `target_entries`. pg_vectorsearch's own
+  split procedure leaves a list alone until it holds twice `target_entries`;
+- after large deletes, to reclaim space and resize the lists;
+- when semantic results get worse after the table has grown.
+
+For `prism`, `reindexVectorIndex()` runs `ANALYZE` on the record table before
+the rebuild, so the rebuild sizes `nlist` from the current row count. To fix
+`nlist` instead, set it at creation
+(`vectorIndex: { method: "prism", nlist: 4096 }`) or with
+`alter index docs_index.record_embedding_prism_idx set (nlist = 4096)` (or
+`reset (nlist)`) before you rebuild. A build can use a different `nlist` than
+the one you set, so read the result with `prism_index_settings()`.
+
+For query-time settings (`prism.nprobe`, `prism.query_limit`, `work_mem`),
+build settings, and in-place list splitting, see pg_vectorsearch's
+[tuning guide](https://github.com/timescale/pg_vectorsearch/blob/v0.1.0/docs/tuning.md)
+and [maintenance guide](https://github.com/timescale/pg_vectorsearch/blob/v0.1.0/docs/maintenance.md).
 
 ### Recover from a failed concurrent rebuild
 
@@ -97,7 +167,7 @@ Sensible defaults are applied; override them only if you have a reason.
 | `bm25.textConfig` | `"english"` | PostgreSQL text search configuration for BM25. |
 | `bm25.k1` | `1.2` | BM25 term-frequency saturation. |
 | `bm25.b` | `0.75` | BM25 length normalization. |
-| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Vector index method (`"hnsw"` or `"prism"`) and build parameters (`m`/`efConstruction` for `hnsw`; optional `nlist`/`targetPages` for `prism`). |
+| `vectorIndex` | `{ method: "hnsw", m: 16, efConstruction: 64 }` | Vector index method (`"hnsw"`, or experimental `"prism"`) and build parameters (`m`/`efConstruction` for `hnsw`; optional `nlist`/`targetPages` for `prism`). |
 
 ## Create an index
 

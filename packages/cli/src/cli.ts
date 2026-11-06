@@ -59,16 +59,7 @@ export async function runCommand(
       switch (command) {
         case "info":
           return output(await runtime.info(), flags);
-        case "vector-index stats":
-          return output(await client.vectorIndexStats(), flags);
         case "vector-index reindex": {
-          const rawNlist = optionalFlag(flags, "nlist");
-          const nlist =
-            rawNlist === undefined
-              ? undefined
-              : rawNlist === "auto"
-                ? ("auto" as const)
-                : positiveInteger(rawNlist, "nlist");
           const parseDurationFlag = (flagName: string) => {
             const raw = optionalFlag(flags, flagName);
             if (raw === undefined) return undefined;
@@ -82,15 +73,18 @@ export async function runCommand(
           };
           const lockTimeoutMs = parseDurationFlag("lock-timeout");
           const statementTimeoutMs = parseDurationFlag("statement-timeout");
+          const concurrently = flags.has("concurrently");
+          await client.reindexVectorIndex({
+            concurrently,
+            ...(lockTimeoutMs === undefined ? {} : { lockTimeoutMs }),
+            ...(statementTimeoutMs === undefined ? {} : { statementTimeoutMs }),
+          });
           return output(
-            await client.reindexVectorIndex({
-              concurrently: flags.has("concurrently"),
-              ...(nlist === undefined ? {} : { nlist }),
-              ...(lockTimeoutMs === undefined ? {} : { lockTimeoutMs }),
-              ...(statementTimeoutMs === undefined
-                ? {}
-                : { statementTimeoutMs }),
-            }),
+            {
+              reindexed: `record_embedding_${client.vectorIndex}_idx`,
+              vectorIndex: client.vectorIndex,
+              concurrently,
+            },
             flags,
           );
         }

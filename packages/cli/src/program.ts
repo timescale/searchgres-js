@@ -64,7 +64,7 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
       .option("--embedding-model <model>", "OpenAI-compatible model")
       .option("--dimensions <n>", "vector dimensions")
       .option("--vector-type <type>", "vector or halfvec")
-      .option("--vector-index <method>", "hnsw or prism")
+      .option("--vector-index <method>", "hnsw or prism (experimental)")
       .option("--api-key-env <name>", "provider key environment variable")
       .option("--base-url <url>", "OpenAI-compatible API root")
       .option("--base-url-env <name>", "API root environment variable")
@@ -157,19 +157,12 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
 
   const vectorIndex = program
     .command("vector-index")
-    .description("inspect and rebuild the vector index");
-  action(
-    vectorIndex
-      .command("stats")
-      .description("show vector index shape, size, and cluster health"),
-    "vector-index stats",
-  );
+    .description("rebuild the vector index");
   action(
     vectorIndex
       .command("reindex")
       .description("rebuild the vector index")
       .option("--concurrently", "run REINDEX INDEX CONCURRENTLY")
-      .option("--nlist <n|auto>", "pin prism nlist or reset to auto")
       .option("--lock-timeout <duration>", "lock wait timeout (e.g. 5s, 0ms)")
       .option(
         "--statement-timeout <duration>",

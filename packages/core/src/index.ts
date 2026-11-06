@@ -42,11 +42,8 @@ export {
 export * from "./open-index.ts";
 export type {
   PatchInput,
-  PrismIndexStats,
-  PrismReindexReason,
   ReindexVectorIndexOptions,
   StoredRecord,
-  VectorIndexStats,
 } from "./records.ts";
 export type {
   Filter,

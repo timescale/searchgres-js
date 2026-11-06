@@ -16,11 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit in-place upgrades from schema format `2` to `3` using a per-index
   `<schema>.migration` ledger and repeatable `CREATE OR REPLACE` routine and
   trigger definitions.
-- Add optional `pg_vectorsearch` (`prism`) vector index support at
-  `createIndex()` time via `vectorIndex: { method: "hnsw" | "prism", ... }`,
-  along with `index.vectorIndexStats()`, `index.reindexVectorIndex(options?)`,
-  `<schema>.vector_index_stats()`, and CLI `searchgres vector-index stats` /
-  `searchgres vector-index reindex`.
+- Add experimental `pg_vectorsearch` (`prism`) vector index support at
+  `createIndex()` time via `vectorIndex: { method: "hnsw" | "prism", ... }`.
+  pg_vectorsearch is not GA, so until it is, the `prism` option and its
+  behavior can change or be removed in a minor release. searchgres does not
+  report `prism` health; the indexes guide shows how to evaluate an index with
+  pg_vectorsearch's own inspection functions.
+- Add `index.reindexVectorIndex(options?)` and CLI
+  `searchgres vector-index reindex` to rebuild the vector index
+  (`concurrently`, `lockTimeoutMs`, `statementTimeoutMs`). For `prism`, the
+  rebuild runs `ANALYZE` first so it sizes its lists from the current row
+  count.
 
 ### Changed
 
