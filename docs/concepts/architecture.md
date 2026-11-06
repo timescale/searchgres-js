@@ -45,7 +45,7 @@ keeping integrity triggers effective for every writer.
 
 Database-native primitives do the specialized work:
 
-- `pgvector` (HNSW) and optional `pg_vectorsearch` (PRISM) for cosine retrieval;
+- `pgvector` (HNSW) and optional, experimental `pg_vectorsearch` (PRISM) for cosine retrieval;
 - `pg_textsearch` for BM25;
 - `ltree` and GiST for hierarchical scope;
 - `tstzrange` and GiST for represented time;

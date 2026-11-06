@@ -14,6 +14,7 @@ import {
   ConflictError,
   InvalidConfigError,
   InvalidIndexError,
+  InvalidInputError,
   LockTimeoutError,
   SchemaVersionError,
 } from "../src/errors.ts";
@@ -469,7 +470,22 @@ test("rolls back provisioning when BM25 text configuration is invalid", async ()
   }
 });
 
-test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", async () => {
+/** Read one effective prism setting through pg_vectorsearch's own inspection function. */
+async function prismSetting(
+  schema: string,
+  name: string,
+): Promise<string | undefined> {
+  const [row] = await sql<{ readonly setting: string }[]>`
+    select setting
+    from public.prism_index_settings
+    ( pg_catalog.format('%I.record_embedding_prism_idx', ${schema}::text)::pg_catalog.regclass
+    )
+    where name = ${name}
+  `;
+  return row?.setting;
+}
+
+test("creates, opens, and reindexes prism and hnsw vector indexes", async () => {
   const hnswSchema = randomTestSchema();
   const prismHalfvecSchema = randomTestSchema();
   const prismVectorSchema = randomTestSchema();
@@ -481,11 +497,14 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
       embedding: noEmbedding,
     });
     assert.equal(hnswIndex.vectorIndex, "hnsw");
-    const hnswStats = await hnswIndex.vectorIndexStats();
-    assert.equal(hnswStats.method, "hnsw");
-    assert.equal(hnswStats.indexName, "record_embedding_hnsw_idx");
-    assert.equal(hnswStats.embeddedRecords, 0);
-    assert.equal(hnswStats.prism, null);
+    assert.equal(await hnswIndex.reindexVectorIndex(), undefined);
+    await assert.rejects(
+      () =>
+        hnswIndex.reindexVectorIndex({
+          nlist: 2,
+        } as unknown as Parameters<typeof hnswIndex.reindexVectorIndex>[0]),
+      InvalidInputError,
+    );
 
     await createIndex(sql, prismHalfvecSchema, {
       dimensions: 4,
@@ -510,52 +529,19 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
     });
     assert.equal(prismIndex.vectorIndex, "prism");
 
-    // Empty prism index starts at nlist = 1, idealNlist = 1, needsReindex = false.
-    const emptyStats = await prismIndex.vectorIndexStats();
-    assert.equal(emptyStats.method, "prism");
-    assert.equal(emptyStats.indexName, "record_embedding_prism_idx");
-    assert.equal(emptyStats.embeddedRecords, 0);
-    assert.equal(emptyStats.prism?.nlist, 1);
-    assert.equal(emptyStats.prism?.pinnedNlist, null);
-    assert.equal(emptyStats.prism?.idealNlist, 1);
-    assert.equal(emptyStats.prism?.needsReindex, false);
-    assert.equal(emptyStats.prism?.reindexReason, null);
-
-    // Insert 4 embedded records (floor(sqrt(4)) = 2 >= 2 while nlist = 1) -> bootstrap_single_cluster.
+    // createIndex builds on an empty table, so prism starts with one list.
+    assert.equal(await prismSetting(prismHalfvecSchema, "nlist"), "1");
     await prismIndex.upsertMany([
       { content: "one", tree: "docs", embedding: [1, 0, 0, 0] },
       { content: "two", tree: "docs", embedding: [0, 1, 0, 0] },
       { content: "three", tree: "docs", embedding: [0, 0, 1, 0] },
       { content: "four", tree: "docs", embedding: [0, 0, 0, 1] },
     ]);
-    const postIngestStats = await prismIndex.vectorIndexStats();
-    assert.equal(postIngestStats.embeddedRecords, 4);
-    assert.equal(postIngestStats.prism?.nlist, 1);
-    assert.equal(postIngestStats.prism?.pinnedNlist, null);
-    assert.equal(postIngestStats.prism?.idealNlist, 2);
-    assert.equal(postIngestStats.prism?.needsReindex, true);
-    assert.equal(
-      postIngestStats.prism?.reindexReason,
-      "bootstrap_single_cluster",
-    );
+    assert.equal(await prismSetting(prismHalfvecSchema, "nlist"), "1");
+    await prismIndex.reindexVectorIndex();
+    assert.equal(await prismSetting(prismHalfvecSchema, "nlist"), "2");
 
-    const reindexedStats = await prismIndex.reindexVectorIndex();
-    assert.equal(reindexedStats.embeddedRecords, 4);
-    assert.equal(reindexedStats.prism?.nlist, 2);
-    assert.equal(reindexedStats.prism?.pinnedNlist, null);
-    assert.equal(reindexedStats.prism?.needsReindex, false);
-    assert.equal(reindexedStats.prism?.reindexReason, null);
-
-    // Pin nlist to 1: pinnedNlist (1) != idealNlist (2), and needsReindex is false
-    // because a plain REINDEX cannot grow past the pinned nlist=1.
-    const pinnedOneStats = await prismIndex.reindexVectorIndex({ nlist: 1 });
-    assert.equal(pinnedOneStats.prism?.nlist, 1);
-    assert.equal(pinnedOneStats.prism?.pinnedNlist, 1);
-    assert.equal(pinnedOneStats.prism?.idealNlist, 2);
-    assert.equal(pinnedOneStats.prism?.needsReindex, false);
-    assert.equal(pinnedOneStats.prism?.reindexReason, null);
-
-    // Reset nlist back to "auto" and rebuild concurrently while verifying session timeouts are preserved.
+    // A concurrent rebuild restores the caller's session timeouts.
     const singlePool = connectToDatabase(sql.options.database, 1);
     try {
       await singlePool`select pg_catalog.set_config('lock_timeout', '4321ms', false)`;
@@ -563,16 +549,12 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
       const singlePrism = await openIndex(singlePool, prismHalfvecSchema, {
         embedding: noEmbedding,
       });
-      const concurrentStats = await singlePrism.reindexVectorIndex({
+      await singlePrism.reindexVectorIndex({
         concurrently: true,
-        nlist: "auto",
         lockTimeoutMs: 5_000,
         statementTimeoutMs: 30_000,
       });
-      assert.equal(concurrentStats.prism?.nlist, 2);
-      assert.equal(concurrentStats.prism?.pinnedNlist, null);
-      assert.equal(concurrentStats.prism?.idealNlist, 2);
-      assert.equal(concurrentStats.prism?.needsReindex, false);
+      assert.equal(await prismSetting(prismHalfvecSchema, "nlist"), "2");
 
       const [afterTimeouts] = await singlePool<
         { readonly lock_timeout: string; readonly statement_timeout: string }[]
@@ -612,15 +594,14 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
   }
 });
 
-test("prism cluster_drift is reported after growth, cleared by reindex, and suppressed when nlist is pinned", async () => {
+test("a prism rebuild sizes its lists from the current row count", async () => {
   const schema = randomTestSchema();
   try {
     await ensureExtensions(sql, { vectorIndex: "prism" });
-    // targetPages = 1 keeps targetEntries small, so drift needs few rows.
     await createIndex(sql, schema, {
       dimensions: 4,
       vectorType: "halfvec",
-      vectorIndex: { method: "prism", targetPages: 1 },
+      vectorIndex: { method: "prism" },
     });
     const index = await openIndex(sql, schema, { embedding: noEmbedding });
     const insertEmbedded = async (count: number, offset: number) => {
@@ -637,43 +618,16 @@ test("prism cluster_drift is reported after growth, cleared by reindex, and supp
       `;
     };
 
-    // Four rows partition into two clusters (floor(sqrt(4)) = 2).
+    // The first rebuild leaves pg_class.reltuples at 4 rows.
     await insertEmbedded(4, 0);
-    const twoClusters = await index.reindexVectorIndex();
-    assert.equal(twoClusters.prism?.nlist, 2);
-    assert.equal(twoClusters.prism?.needsReindex, false);
-    const targetEntries = twoClusters.prism?.targetEntries ?? 0;
-    assert.ok(targetEntries > 0);
+    await index.reindexVectorIndex();
+    assert.equal(await prismSetting(schema, "nlist"), "2");
 
-    // Grow past the split trigger: nlist * targetEntries * 2.
-    const threshold = 2 * targetEntries * 2;
-    await insertEmbedded(threshold, 4);
-    const drifted = await index.vectorIndexStats();
-    assert.equal(drifted.embeddedRecords, threshold + 4);
-    assert.equal(drifted.prism?.nlist, 2);
-    assert.equal(drifted.prism?.pinnedNlist, null);
-    assert.ok((drifted.prism?.idealNlist ?? 0) > 2);
-    assert.equal(drifted.prism?.needsReindex, true);
-    assert.equal(drifted.prism?.reindexReason, "cluster_drift");
-
-    // An automatic rebuild re-partitions for the current row count.
-    const rebuilt = await index.reindexVectorIndex();
-    assert.ok((rebuilt.prism?.nlist ?? 0) > 2);
-    assert.equal(rebuilt.prism?.needsReindex, false);
-    assert.equal(rebuilt.prism?.reindexReason, null);
-
-    // A pin at the old width cannot grow, so the warning stays off while
-    // idealNlist still reports the better value.
-    const pinned = await index.reindexVectorIndex({ nlist: 2 });
-    assert.equal(pinned.prism?.nlist, 2);
-    assert.equal(pinned.prism?.pinnedNlist, 2);
-    assert.ok((pinned.prism?.idealNlist ?? 0) > 2);
-    assert.ok(
-      pinned.embeddedRecords >
-        (pinned.prism?.nlist ?? 0) * (pinned.prism?.targetEntries ?? 0) * 2,
-    );
-    assert.equal(pinned.prism?.needsReindex, false);
-    assert.equal(pinned.prism?.reindexReason, null);
+    // Without a fresh ANALYZE, prism would size this rebuild from the stale
+    // 4-row estimate and keep 2 lists.
+    await insertEmbedded(396, 4);
+    await index.reindexVectorIndex();
+    assert.ok(Number(await prismSetting(schema, "nlist")) > 2);
   } finally {
     await dropTestSchema(sql, schema);
   }

@@ -188,17 +188,14 @@ test("provisioning is strict and provider-free; config generation is offline", a
   ]);
   expect(generated.value.index.schema).toBe("offline");
   expect(generated.value.index.vectorIndex).toBe("prism");
-  expect((await cli(["vector-index", "stats"])).value).toMatchObject({
-    method: "hnsw",
-    indexName: "record_embedding_hnsw_idx",
-    prism: null,
-  });
+  await cli(["vector-index", "stats"], 2);
+  await cli(["vector-index", "reindex", "--nlist", "2"], 2);
   expect(
     (await cli(["vector-index", "reindex", "--concurrently"])).value,
-  ).toMatchObject({
-    method: "hnsw",
-    indexName: "record_embedding_hnsw_idx",
-    prism: null,
+  ).toEqual({
+    reindexed: "record_embedding_hnsw_idx",
+    vectorIndex: "hnsw",
+    concurrently: true,
   });
   expect(calls).toBe(0);
 });

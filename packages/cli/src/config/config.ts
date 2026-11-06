@@ -62,6 +62,7 @@ export const runtimeConfigSchema = z.strictObject({
       schema: z.string().min(1),
       dimensions: z.number().int().positive(),
       vectorType: z.enum(["vector", "halfvec"]),
+      // "prism" (pg_vectorsearch) is experimental until pg_vectorsearch is GA.
       vectorIndex: z.enum(["hnsw", "prism"]).prefault("hnsw"),
     })
     .refine(
