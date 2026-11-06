@@ -92,8 +92,12 @@ export async function readIndexMarker(
     `,
     { spanName: "readIndexMarker", dbOperationName: "SELECT" },
   );
+  if (!marker) {
+    throw new InvalidIndexError(schema, {
+      detail: "the schema does not exist",
+    });
+  }
   if (
-    !marker ||
     marker.schema_comment !== INDEX_SCHEMA_COMMENT ||
     !marker.has_version_table ||
     !marker.has_version_column ||
@@ -366,6 +370,12 @@ async function readVectorIndexOpclass(
       namespace: schema,
     },
   );
+  if (rows.length === 0) {
+    throw new InvalidIndexError(schema, {
+      detail:
+        "the vector index (record_embedding_hnsw_idx or record_embedding_prism_idx) does not exist",
+    });
+  }
   if (rows.length !== 1 || !rows[0]) {
     throw new InvalidIndexError(schema);
   }

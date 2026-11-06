@@ -29,6 +29,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SCHEMA_FORMAT_VERSION` to `"3"`.
 - Replace `IndexConfig.hnsw` with the discriminated union
   `IndexConfig.vectorIndex` (`{ method: "hnsw", m?, efConstruction? } | { method: "prism", nlist?, targetPages? }`).
+- Make `postgres` a peer dependency (`^3.4.9`) instead of a regular
+  dependency, and make `openIndex()` reject a postgres.js 4 `sql` instance
+  with `InvalidConfigError`. postgres.js 4 removed `sql.array()`, so a v4
+  instance previously failed at the first write. Install with
+  `npm install searchgres postgres@3`.
+- Say why an index is invalid: `InvalidIndexError` now reports a missing
+  schema or a missing vector index.
+- The CLI and MCP server now keep the messages of index, schema-format,
+  extension, dimension, batch-size, embedding-availability, and timeout
+  errors, and add a safe failure class (HTTP status, SQLSTATE, or system
+  error code) to provider and database failures. Previously most of these
+  printed only `searchgres.js operation failed (CODE)`.
+- Document that Docker containers that build a `prism` index need
+  `/dev/shm` larger than `maintenance_work_mem`, and set `shm_size: 1g` in the
+  evaluation Compose stack.
+
+### Fixed
+
+- **Security:** the compiled `searchgres` binary no longer loads `.env` or
+  `bunfig.toml` from the current working directory. Bun standalone executables
+  load both by default. A `bunfig.toml` `preload` entry could run arbitrary
+  code when the binary started in an untrusted directory, and a `.env` file
+  overrode `--env-file` and `--no-env-file`.
 
 ## [0.3.2] - 2026-09-18
 

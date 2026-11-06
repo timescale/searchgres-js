@@ -255,9 +255,12 @@ Exit codes: `0` success; `2` when the request cannot succeed as written
 (usage and input errors, plus deterministic record-state mismatches:
 `NOT_FOUND`, `CONFLICT`, `STALE_VERSION`); `1` operational failures (database,
 provider, configuration). Structured errors on stderr carry a stable code.
-Validation and record-state messages are retained because they describe only
-the caller's own request; provider and driver messages are replaced by their
-code so remote text and credentials never reach output.
+Validation, record-state, index, extension, dimension, and timeout messages are
+retained because they describe only the caller's own request or catalog facts.
+Provider and driver messages are replaced by their code so remote text and
+credentials never reach output. Where one is available, the output adds a
+safe failure class instead: an HTTP status (`HTTP 404`), a SQLSTATE
+(`SQLSTATE 28P01`), or a system error code (`ECONNREFUSED`).
 
 Records are printed in the shape they are accepted: `temporal` is `null`, an
 ISO `[instant]`, or an ISO `[start, end]` interval; dates are ISO strings.

@@ -24,7 +24,7 @@ manages the search schema, indexes, and embedding workflow.
 searchgres.js is published on npm as `searchgres`.
 
 ```bash
-npm install searchgres postgres @ai-sdk/openai
+npm install searchgres postgres@3 @ai-sdk/openai
 ```
 
 ```ts

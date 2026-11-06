@@ -80,6 +80,11 @@ try {
   ]) {
     assert.ok((await readFile(join(installed, file))).length > 0, file);
   }
+  const manifest = JSON.parse(
+    await readFile(join(installed, "package.json"), "utf8"),
+  );
+  assert.equal(manifest.peerDependencies?.postgres, "^3.4.9");
+  assert.equal(manifest.dependencies?.postgres, undefined);
   const shipped = await readdir(installed, { recursive: true });
   assert.ok(!shipped.includes("src"));
   assert.ok(

@@ -26,6 +26,7 @@ try {
     "-d",
     "--name",
     container,
+    "--shm-size=1g",
     "-e",
     "POSTGRES_HOST_AUTH_METHOD=trust",
     "-p",

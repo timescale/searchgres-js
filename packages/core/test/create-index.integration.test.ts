@@ -131,6 +131,29 @@ test("openIndex validates its options before touching the database", async () =>
     );
   }
 
+  // postgres.js 4 removed sql.array(); reject such an instance before the
+  // first round-trip.
+  const postgresV4 = Object.assign(
+    (...args: unknown[]) =>
+      (sql as unknown as (...a: unknown[]) => unknown)(...args),
+    {
+      ...sql,
+      array: () => {
+        throw Object.assign(new Error("sql.array() is removed in v4"), {
+          code: "ARRAY_REMOVED",
+        });
+      },
+    },
+  ) as unknown as typeof sql;
+  await assert.rejects(
+    () => openIndex(postgresV4, missing, { embedding: noEmbedding }),
+    (error: unknown) => {
+      assert.ok(error instanceof InvalidConfigError);
+      assert.match(error.message, /postgres\.js 3\.x/);
+      return true;
+    },
+  );
+
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
@@ -231,6 +254,10 @@ test("rejects plain schemas and unsupported schema formats", async () => {
   const plainSchema = randomTestSchema();
   const versionedSchema = randomTestSchema();
   try {
+    await assert.rejects(
+      () => openIndex(sql, plainSchema, { embedding: "mock-embedding" }),
+      /is not a searchgres index: the schema does not exist$/,
+    );
     await sql`create schema ${sql(plainSchema)}`;
     await assert.rejects(
       () => openIndex(sql, plainSchema, { embedding: "mock-embedding" }),
@@ -238,6 +265,16 @@ test("rejects plain schemas and unsupported schema formats", async () => {
     );
 
     await createIndex(sql, versionedSchema, { dimensions: 4 });
+    await sql`drop index ${sql(versionedSchema)}.record_embedding_hnsw_idx`;
+    await assert.rejects(
+      () => openIndex(sql, versionedSchema, { embedding: "mock-embedding" }),
+      /: the vector index \(record_embedding_hnsw_idx or record_embedding_prism_idx\) does not exist$/,
+    );
+    await sql`
+      create index record_embedding_hnsw_idx
+      on ${sql(versionedSchema)}.record
+      using hnsw (embedding public.halfvec_cosine_ops)
+    `;
     await sql`
       update ${sql(versionedSchema)}.version
       set version = '1'
