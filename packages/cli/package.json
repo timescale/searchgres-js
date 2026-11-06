@@ -14,7 +14,7 @@
     "clean": "rm -rf dist tsconfig.build.tsbuildinfo src/tokenizer/tokenizer.worker.generated.cjs",
     "test:unit": "../../bun run bundle:tokenizer-worker && find src -name '*.test.ts' -print0 | xargs -0 ../../bun test",
     "test:db": "../../bun test ./test/*.integration.test.ts",
-    "compile": "mkdir -p ../../dist && ../../bun build ./src/bin.ts --compile --loader=.sql:text --outfile ../../dist/searchgres && ../../bun ../../scripts/macos-sign.ts ../../dist/searchgres",
+    "compile": "mkdir -p ../../dist && ../../bun build ./src/bin.ts --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --loader=.sql:text --outfile ../../dist/searchgres && ../../bun ../../scripts/macos-sign.ts ../../dist/searchgres",
     "compile:all": "../../bun ../../scripts/compile-targets.ts searchgres ./src/bin.ts",
     "typecheck": "../../bun run bundle:tokenizer-worker && tsc -p tsconfig.json"
   },

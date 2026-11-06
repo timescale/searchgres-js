@@ -107,6 +107,36 @@ afterAll(async () => {
   if (dir) await rm(dir, { recursive: true, force: true });
 });
 
+test("the binary does not load .env or bunfig.toml from the working directory", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "searchgres-cwd-"));
+  try {
+    const marker = join(cwd, "preload-ran");
+    await Bun.write(
+      join(cwd, "preload.ts"),
+      `await Bun.write(${JSON.stringify(marker)}, "x");\n`,
+    );
+    await Bun.write(join(cwd, "bunfig.toml"), 'preload = ["./preload.ts"]\n');
+    // If Bun loads this .env, `info` finds the valid config and succeeds.
+    await Bun.write(join(cwd, ".env"), `SEARCHGRES_CONFIG=${path}\n`);
+    const baseEnv: Record<string, string | undefined> = { ...env() };
+    delete baseEnv.SEARCHGRES_CONFIG;
+    const child = Bun.spawn([binary, "--no-env-file", "--json", "info"], {
+      cwd,
+      env: baseEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [status, err] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+    expect(status, err).not.toBe(0);
+    expect(await Bun.file(marker).exists()).toBe(false);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provisioning is strict and provider-free; config generation is offline", async () => {
   expect(calls).toBe(0);
   expect((await cli(["init", "--if-not-exists"])).value.created).toBe(false);

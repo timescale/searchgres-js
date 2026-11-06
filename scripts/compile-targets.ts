@@ -35,6 +35,10 @@ for (const { target, suffix } of targets) {
       "build",
       entrypoint,
       "--compile",
+      // Do not let Bun load .env or bunfig.toml from the working directory.
+      // A bunfig.toml preload runs code before main.
+      "--no-compile-autoload-dotenv",
+      "--no-compile-autoload-bunfig",
       "--loader=.sql:text",
       `--target=${target}`,
       `--outfile=${output}`,
