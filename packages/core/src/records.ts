@@ -508,6 +508,7 @@ export async function reindexVectorIndex(
           false,
         );
       }
+      await refreshPrismRowEstimate(reserved, index);
       await applyPrismNlistOption(reserved, index.schema, indexName, nlist);
       await runSql(
         reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
@@ -532,11 +533,7 @@ export async function reindexVectorIndex(
         reserved.release();
       }
     }
-  } else if (
-    nlist !== undefined ||
-    lockTimeoutMs !== undefined ||
-    statementTimeoutMs !== undefined
-  ) {
+  } else {
     await pool.begin(async (tx) => {
       await applyReindexTimeouts(
         tx,
@@ -545,6 +542,7 @@ export async function reindexVectorIndex(
         statementTimeoutMs,
         true,
       );
+      await refreshPrismRowEstimate(tx, index);
       await applyPrismNlistOption(tx, index.schema, indexName, nlist);
       await runSql(tx`reindex index ${tx(index.schema)}.${tx(indexName)}`, {
         spanName: "reindexVectorIndex",
@@ -552,15 +550,26 @@ export async function reindexVectorIndex(
         namespace: index.schema,
       });
     });
-  } else {
-    await runSql(pool`reindex index ${pool(index.schema)}.${pool(indexName)}`, {
-      spanName: "reindexVectorIndex",
-      dbOperationName: "REINDEX",
-      namespace: index.schema,
-    });
   }
 
   return vectorIndexStats(index);
+}
+
+/**
+ * A prism build sizes nlist from pg_class.reltuples when that value is
+ * positive. A previous build or ANALYZE can leave it stale after a bulk load,
+ * so a rebuild would keep the old width. ANALYZE refreshes the estimate first.
+ */
+async function refreshPrismRowEstimate(
+  sql: postgres.ISql,
+  index: Index,
+): Promise<void> {
+  if (index.vectorIndex !== "prism") return;
+  await runSql(sql`analyze ${sql(index.schema)}.record`, {
+    spanName: "analyzeRecordTable",
+    dbOperationName: "ANALYZE",
+    namespace: index.schema,
+  });
 }
 
 async function applyReindexTimeouts(

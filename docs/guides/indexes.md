@@ -46,9 +46,46 @@ await createIndex(sql, "docs_index", {
 ```
 
 Keep three `prism` characteristics in mind:
-1. **Empty-table creation and reindexing**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single partition (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`) so `prism` partitions clusters from the loaded vectors. Use `await index.vectorIndexStats()` to check `prism.needsReindex` (`"bootstrap_single_cluster"` or `"cluster_drift"`), compare `prism.pinnedNlist` against `prism.idealNlist`, and pass `{ nlist: number | "auto" }` to `reindexVectorIndex()` to repin or reset `nlist`. As with any PostgreSQL `REINDEX INDEX CONCURRENTLY`, if a concurrent rebuild fails mid-way, run `reindexVectorIndex()` again to clean up any invalid `_ccnew`/`_ccold` index artifact.
+1. **Empty-table creation and reindexing**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single partition (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`) so `prism` partitions clusters from the loaded vectors. Use `await index.vectorIndexStats()` to check `prism.needsReindex` (`"bootstrap_single_cluster"` or `"cluster_drift"`), compare `prism.pinnedNlist` against `prism.idealNlist`, and pass `{ nlist: number | "auto" }` to `reindexVectorIndex()` to repin or reset `nlist`. See [Recover from a failed concurrent rebuild](#recover-from-a-failed-concurrent-rebuild).
 2. **Filtered vector search**: `hnsw` uses `hnsw.iterative_scan = 'strict_order'` to continue walking the graph when `WHERE` filters discard rows. `prism` sizes a fixed top-k buffer up front and post-filters, so highly selective filters can return fewer than `limit` rows.
 3. **Dimension ceiling**: `prism` supports up to 1,968 dimensions for both `vector` and `halfvec`.
+
+### Recover from a failed concurrent rebuild
+
+`reindexVectorIndex({ concurrently: true })` runs PostgreSQL's
+`REINDEX INDEX CONCURRENTLY`. If that rebuild fails or is cancelled, PostgreSQL
+can leave an invalid index behind. PostgreSQL does not remove it, and
+retrying `reindexVectorIndex()` does not remove it either. An invalid index
+still uses disk space and slows every write, so drop it explicitly.
+
+Find invalid indexes in the index schema:
+
+```sql
+select c.relname
+from pg_catalog.pg_index i
+inner join pg_catalog.pg_class c on (c.oid = i.indexrelid)
+inner join pg_catalog.pg_namespace n on (n.oid = c.relnamespace)
+where n.nspname = 'docs_index'
+and not i.indisvalid;
+```
+
+Then recover based on the suffix:
+
+- **`..._ccnew`**: the rebuild did not finish. Drop the leftover index, then
+  retry the rebuild:
+
+  ```sql
+  drop index docs_index.record_embedding_prism_idx_ccnew;
+  ```
+
+- **`..._ccold`**: the rebuild finished, but the old index was not dropped.
+  Drop the leftover index. Do not retry the rebuild.
+
+  ```sql
+  drop index docs_index.record_embedding_prism_idx_ccold;
+  ```
+
+The same applies to `record_embedding_hnsw_idx`.
 
 ### Keyword and vector index tuning
 

@@ -597,3 +597,70 @@ test("creates, opens, inspects, and reindexes prism and hnsw vector indexes", as
     await dropTestSchema(sql, prismVectorSchema);
   }
 });
+
+test("prism cluster_drift is reported after growth, cleared by reindex, and suppressed when nlist is pinned", async () => {
+  const schema = randomTestSchema();
+  try {
+    await ensureExtensions(sql, { vectorIndex: "prism" });
+    // targetPages = 1 keeps targetEntries small, so drift needs few rows.
+    await createIndex(sql, schema, {
+      dimensions: 4,
+      vectorType: "halfvec",
+      vectorIndex: { method: "prism", targetPages: 1 },
+    });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
+    const insertEmbedded = async (count: number, offset: number) => {
+      await sql`
+        insert into ${sql(schema)}.record (content, embedding)
+        select
+          'row ' || i
+        , pg_catalog.format
+          ( '[%s,%s,%s,%s]'
+          , pg_catalog.sin(i), pg_catalog.cos(i)
+          , pg_catalog.sin(2 * i), pg_catalog.cos(2 * i)
+          )::public.halfvec(4)
+        from pg_catalog.generate_series(${offset + 1}::integer, ${offset + count}::integer) i
+      `;
+    };
+
+    // Four rows partition into two clusters (floor(sqrt(4)) = 2).
+    await insertEmbedded(4, 0);
+    const twoClusters = await index.reindexVectorIndex();
+    assert.equal(twoClusters.prism?.nlist, 2);
+    assert.equal(twoClusters.prism?.needsReindex, false);
+    const targetEntries = twoClusters.prism?.targetEntries ?? 0;
+    assert.ok(targetEntries > 0);
+
+    // Grow past the split trigger: nlist * targetEntries * 2.
+    const threshold = 2 * targetEntries * 2;
+    await insertEmbedded(threshold, 4);
+    const drifted = await index.vectorIndexStats();
+    assert.equal(drifted.embeddedRecords, threshold + 4);
+    assert.equal(drifted.prism?.nlist, 2);
+    assert.equal(drifted.prism?.pinnedNlist, null);
+    assert.ok((drifted.prism?.idealNlist ?? 0) > 2);
+    assert.equal(drifted.prism?.needsReindex, true);
+    assert.equal(drifted.prism?.reindexReason, "cluster_drift");
+
+    // An automatic rebuild re-partitions for the current row count.
+    const rebuilt = await index.reindexVectorIndex();
+    assert.ok((rebuilt.prism?.nlist ?? 0) > 2);
+    assert.equal(rebuilt.prism?.needsReindex, false);
+    assert.equal(rebuilt.prism?.reindexReason, null);
+
+    // A pin at the old width cannot grow, so the warning stays off while
+    // idealNlist still reports the better value.
+    const pinned = await index.reindexVectorIndex({ nlist: 2 });
+    assert.equal(pinned.prism?.nlist, 2);
+    assert.equal(pinned.prism?.pinnedNlist, 2);
+    assert.ok((pinned.prism?.idealNlist ?? 0) > 2);
+    assert.ok(
+      pinned.embeddedRecords >
+        (pinned.prism?.nlist ?? 0) * (pinned.prism?.targetEntries ?? 0) * 2,
+    );
+    assert.equal(pinned.prism?.needsReindex, false);
+    assert.equal(pinned.prism?.reindexReason, null);
+  } finally {
+    await dropTestSchema(sql, schema);
+  }
+});
