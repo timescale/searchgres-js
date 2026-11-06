@@ -81,7 +81,7 @@ export interface IndexSqlContext {
 export interface StoredIndexShape {
   readonly vectorType: "vector" | "halfvec";
   readonly dimensions: number;
-  readonly vectorIndex?: VectorIndexMethod;
+  readonly vectorIndex: VectorIndexMethod;
 }
 
 export function vectorIndexNameForMethod(method: VectorIndexMethod): string {
@@ -175,7 +175,7 @@ export function migrationSqlContext(
   if (shape.vectorType !== "vector" && shape.vectorType !== "halfvec") {
     throw new Error(`Invalid vector type: ${String(shape.vectorType)}`);
   }
-  const method: VectorIndexMethod = shape.vectorIndex ?? "hnsw";
+  const method: VectorIndexMethod = shape.vectorIndex;
   if (method !== "hnsw" && method !== "prism") {
     throw new Error(`Invalid vector index method: ${String(method)}`);
   }

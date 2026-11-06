@@ -1,6 +1,6 @@
 import type { Index, TreeCountSelector } from "searchgres";
 import { exportRecords, importRecords } from "./bulk.ts";
-import { loadConfiguredCommand } from "./config/config.ts";
+import { duration, loadConfiguredCommand } from "./config/config.ts";
 import { filterExpressionFromFlags } from "./filter-input.ts";
 import {
   camelCase,
@@ -69,10 +69,27 @@ export async function runCommand(
               : rawNlist === "auto"
                 ? ("auto" as const)
                 : positiveInteger(rawNlist, "nlist");
+          const parseDurationFlag = (flagName: string) => {
+            const raw = optionalFlag(flags, flagName);
+            if (raw === undefined) return undefined;
+            try {
+              return duration(raw);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              throw new InputError(`Invalid --${flagName}: ${message}`);
+            }
+          };
+          const lockTimeoutMs = parseDurationFlag("lock-timeout");
+          const statementTimeoutMs = parseDurationFlag("statement-timeout");
           return output(
             await client.reindexVectorIndex({
               concurrently: flags.has("concurrently"),
               ...(nlist === undefined ? {} : { nlist }),
+              ...(lockTimeoutMs === undefined ? {} : { lockTimeoutMs }),
+              ...(statementTimeoutMs === undefined
+                ? {}
+                : { statementTimeoutMs }),
             }),
             flags,
           );

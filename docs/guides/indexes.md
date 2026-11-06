@@ -46,8 +46,8 @@ await createIndex(sql, "docs_index", {
 ```
 
 Keep three `prism` characteristics in mind:
-1. **Empty-table creation and reindexing**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single partition (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`) so `prism` partitions clusters from the loaded vectors. Use `await index.vectorIndexStats()` to check `prism.needsReindex` (`"bootstrap_single_cluster"` or `"cluster_drift"`).
-2. **Filtered vector search**: `hnsw` uses `hnsw.iterative_scan = 'strict_order'` to continue walking the graph when `WHERE` filters discard rows. `prism` sizes a fixed top-$k$ buffer up front and post-filters, so highly selective filters can return fewer than `limit` rows.
+1. **Empty-table creation and reindexing**: `createIndex()` runs on an empty table, so a fresh `prism` index starts with a single partition (`nlist = 1`). After your initial bulk load and embedding drain, call `await index.reindexVectorIndex()` (or `reindexVectorIndex({ concurrently: true })`) so `prism` partitions clusters from the loaded vectors. Use `await index.vectorIndexStats()` to check `prism.needsReindex` (`"bootstrap_single_cluster"` or `"cluster_drift"`), compare `prism.pinnedNlist` against `prism.idealNlist`, and pass `{ nlist: number | "auto" }` to `reindexVectorIndex()` to repin or reset `nlist`. As with any PostgreSQL `REINDEX INDEX CONCURRENTLY`, if a concurrent rebuild fails mid-way, run `reindexVectorIndex()` again to clean up any invalid `_ccnew`/`_ccold` index artifact.
+2. **Filtered vector search**: `hnsw` uses `hnsw.iterative_scan = 'strict_order'` to continue walking the graph when `WHERE` filters discard rows. `prism` sizes a fixed top-k buffer up front and post-filters, so highly selective filters can return fewer than `limit` rows.
 3. **Dimension ceiling**: `prism` supports up to 1,968 dimensions for both `vector` and `halfvec`.
 
 ### Keyword and vector index tuning

@@ -100,8 +100,9 @@ scope. searchgres.js gives each query the retrieval strategy it needs:
 ### Postgres-native, not another retrieval stack
 
 A searchgres.js index is an ordinary PostgreSQL schema containing records, SQL
-routines, and native indexes: HNSW through `pgvector`, BM25 through
-`pg_textsearch`, GiST for hierarchy and time, and GIN for metadata.
+routines, and native indexes: HNSW through `pgvector` (or PRISM through
+`pg_vectorsearch`), BM25 through `pg_textsearch`, GiST for hierarchy and time,
+and GIN for metadata.
 
 That means one database to operate, one transaction system, normal backups and
 replication, and direct SQL access when you need it. Your search index lives in

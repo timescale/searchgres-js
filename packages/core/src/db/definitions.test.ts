@@ -113,13 +113,16 @@ test("every SQL file in sql/ has one manifest entry and renders cleanly", async 
 
   for (const migration of [migrationTableMigration, ...idempotentMigrations]) {
     for (const vectorType of ["vector", "halfvec"] as const) {
-      const context = migrationSqlContext("sgtest_manifest", {
-        vectorType,
-        dimensions: 4,
-      });
-      const rendered = renderSql(migration.sql, context.variables);
-      assert.ok(!rendered.includes("{{"), migration.file);
-      assert.ok(!rendered.includes("}}"), migration.file);
+      for (const vectorIndex of ["hnsw", "prism"] as const) {
+        const context = migrationSqlContext("sgtest_manifest", {
+          vectorType,
+          dimensions: 4,
+          vectorIndex,
+        });
+        const rendered = renderSql(migration.sql, context.variables);
+        assert.ok(!rendered.includes("{{"), migration.file);
+        assert.ok(!rendered.includes("}}"), migration.file);
+      }
     }
   }
 });

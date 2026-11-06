@@ -78,6 +78,7 @@ export async function consumerTypes(sql: postgres.Sql, schema: string) {
     schema,
     dimensions: 4,
     vectorType: "vector",
+    vectorIndex: "hnsw",
     embedding: noEmbedding,
     truncate: noTruncation,
   });

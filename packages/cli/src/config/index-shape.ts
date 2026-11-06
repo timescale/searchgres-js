@@ -27,13 +27,16 @@ export function assertConfiguredIndexShape(
   ) {
     return;
   }
-  const methodSuffix =
+  const configuredLabel =
     actualMethod !== configuredMethod
-      ? ` (${configuredMethod} vs ${actualMethod})`
-      : "";
+      ? `${configured.vectorType}(${configured.dimensions}) [${configuredMethod}]`
+      : `${configured.vectorType}(${configured.dimensions})`;
+  const actualLabel =
+    actualMethod !== configuredMethod
+      ? `${index.vectorType}(${index.dimensions}) [${actualMethod}]`
+      : `${index.vectorType}(${index.dimensions})`;
   throw new InvalidConfigError(
     `Index ${JSON.stringify(configured.schema)} does not match the config: ` +
-      `configured ${configured.vectorType}(${configured.dimensions}), ` +
-      `database has ${index.vectorType}(${index.dimensions})${methodSuffix}`,
+      `configured ${configuredLabel}, database has ${actualLabel}`,
   );
 }

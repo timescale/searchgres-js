@@ -16,12 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit in-place upgrades from schema format `2` to `3` using a per-index
   `<schema>.migration` ledger and repeatable `CREATE OR REPLACE` routine and
   trigger definitions.
+- Add optional `pg_vectorsearch` (`prism`) vector index support at
+  `createIndex()` time via `vectorIndex: { method: "hnsw" | "prism", ... }`,
+  along with `index.vectorIndexStats()`, `index.reindexVectorIndex(options?)`,
+  `<schema>.vector_index_stats()`, and CLI `searchgres vector-index stats` /
+  `searchgres vector-index reindex`.
 
 ### Changed
 
 - Author persisted index DDL, triggers, and schema-local routines in embedded
   `.sql` files under `packages/core/src/db/sql/`, and advance
   `SCHEMA_FORMAT_VERSION` to `"3"`.
+- Replace `IndexConfig.hnsw` with the discriminated union
+  `IndexConfig.vectorIndex` (`{ method: "hnsw", m?, efConstruction? } | { method: "prism", nlist?, targetPages? }`).
 
 ## [0.3.2] - 2026-09-18
 

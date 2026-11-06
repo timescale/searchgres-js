@@ -14,6 +14,7 @@ function fakeIndex(): Index {
     schema: "sgtest_validation",
     vectorType: "halfvec",
     dimensions: 4,
+    vectorIndex: "hnsw",
     embedding: {} as never,
     truncate: noTruncation,
   });

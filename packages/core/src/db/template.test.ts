@@ -123,6 +123,7 @@ test("provisioning context validates the schema, shape and catalog literal", () 
   const migration = migrationSqlContext("docs", {
     vectorType: "vector",
     dimensions: 8,
+    vectorIndex: "hnsw",
   });
   assert.equal(
     renderSql(
@@ -140,7 +141,11 @@ test("provisioning context validates the schema, shape and catalog literal", () 
     assert.throws(() => renderSql(creationOnly, migration.variables));
   }
   assert.throws(() =>
-    migrationSqlContext("docs", { vectorType: "vector", dimensions: 2001 }),
+    migrationSqlContext("docs", {
+      vectorType: "vector",
+      dimensions: 2001,
+      vectorIndex: "hnsw",
+    }),
   );
 
   const prismContext = indexSqlContext(

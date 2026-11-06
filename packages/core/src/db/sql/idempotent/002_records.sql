@@ -623,6 +623,8 @@ begin
     , _posting_pages
     from public.prism_index_settings(_index_oid) s;
 
+    -- Mirror prism_auto_nlist(count, dim, target_pages) from pg_vectorsearch
+    -- until upstream exposes a SQL helper (timescale/pg_vectorsearch#406).
     _count := greatest(_embedded::float8, 1.0);
     _linear := trunc(_count / _target_entries::float8 + 0.5)::integer;
     _min_lists := trunc(sqrt(_count))::integer;
