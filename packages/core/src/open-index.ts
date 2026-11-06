@@ -51,8 +51,6 @@ import {
   type ReindexVectorIndexOptions,
   reindexVectorIndex,
   type StoredRecord,
-  type VectorIndexStats,
-  vectorIndexStats,
 } from "./records.ts";
 import { type SearchOptions, type SearchResult, search } from "./search.ts";
 import {
@@ -163,6 +161,7 @@ export class Index implements TransactionIndex {
   readonly schema: string;
   readonly vectorType: "vector" | "halfvec";
   readonly dimensions: number;
+  /** Vector index access method. `prism` is experimental. */
   readonly vectorIndex: VectorIndexMethod;
   readonly embedding: EmbeddingModel;
   readonly truncate: Truncator;
@@ -536,56 +535,21 @@ export class Index implements TransactionIndex {
     );
   }
 
-  /** Inspect vector index shape, size, and (for `prism`) cluster health. */
-  async vectorIndexStats(): Promise<VectorIndexStats> {
-    return runIndexOperation(
-      this,
-      "searchgres.index.vector_stats",
-      async (span) => {
-        const stats = await vectorIndexStats(this);
-        span.setAttributes({
-          "searchgres.index.vector_method": stats.method,
-          "searchgres.index.embedded_records": stats.embeddedRecords,
-          ...(stats.prism !== null
-            ? {
-                "searchgres.index.prism.nlist": stats.prism.nlist,
-                "searchgres.index.prism.ideal_nlist": stats.prism.idealNlist,
-                "searchgres.index.prism.needs_reindex":
-                  stats.prism.needsReindex,
-              }
-            : {}),
-        });
-        return stats;
-      },
-    );
-  }
-
-  /** Rebuild the vector index (`REINDEX INDEX [CONCURRENTLY]`) and return updated stats. */
-  async reindexVectorIndex(
-    options?: ReindexVectorIndexOptions,
-  ): Promise<VectorIndexStats> {
+  /**
+   * Rebuild the vector index (`REINDEX INDEX [CONCURRENTLY]`). For `prism`,
+   * run `ANALYZE` on the record table first, so the rebuild sizes its clusters
+   * from the current row count.
+   */
+  async reindexVectorIndex(options?: ReindexVectorIndexOptions): Promise<void> {
     return runIndexOperation(
       this,
       "searchgres.index.vector_reindex",
       async (span) => {
-        span.setAttribute(
-          "searchgres.index.concurrently",
-          options?.concurrently ?? false,
-        );
-        const stats = await reindexVectorIndex(this, options);
         span.setAttributes({
-          "searchgres.index.vector_method": stats.method,
-          "searchgres.index.embedded_records": stats.embeddedRecords,
-          ...(stats.prism !== null
-            ? {
-                "searchgres.index.prism.nlist": stats.prism.nlist,
-                "searchgres.index.prism.ideal_nlist": stats.prism.idealNlist,
-                "searchgres.index.prism.needs_reindex":
-                  stats.prism.needsReindex,
-              }
-            : {}),
+          "searchgres.index.vector_method": this.vectorIndex,
+          "searchgres.index.concurrently": options?.concurrently ?? false,
         });
-        return stats;
+        await reindexVectorIndex(this, options);
       },
     );
   }

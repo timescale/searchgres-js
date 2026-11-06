@@ -1,6 +1,5 @@
 import type postgres from "postgres";
 import { z } from "zod";
-import type { VectorIndexMethod } from "./config.ts";
 import { vectorIndexNameForMethod } from "./db/template.ts";
 import {
   ConflictError,
@@ -81,28 +80,6 @@ const patchSchema = z
 /** Fields a {@link Index.patch} may change. Omit a key to leave it unchanged. */
 export type PatchInput = z.input<typeof patchSchema>;
 
-export type PrismReindexReason = "bootstrap_single_cluster" | "cluster_drift";
-
-export interface PrismIndexStats {
-  readonly nlist: number;
-  readonly pinnedNlist: number | null;
-  readonly idealNlist: number;
-  readonly targetPages: number;
-  readonly targetEntries: number;
-  readonly nlevels: number;
-  readonly postingPages: number;
-  readonly needsReindex: boolean;
-  readonly reindexReason: PrismReindexReason | null;
-}
-
-export interface VectorIndexStats {
-  readonly method: VectorIndexMethod;
-  readonly indexName: string;
-  readonly indexSizeBytes: number;
-  readonly embeddedRecords: number;
-  readonly prism: PrismIndexStats | null;
-}
-
 export interface ReindexVectorIndexOptions {
   /**
    * When `true`, runs `REINDEX INDEX CONCURRENTLY` outside a transaction block
@@ -110,37 +87,14 @@ export interface ReindexVectorIndexOptions {
    * Default: `false`.
    */
   readonly concurrently?: boolean;
-  /**
-   * For `prism` indexes: pin `nlist` to a positive integer (`ALTER INDEX ... SET (nlist = N)`)
-   * or unpin it back to automatic optimal sizing (`"auto"` -> `ALTER INDEX ... RESET (nlist)`)
-   * before rebuilding.
-   */
-  readonly nlist?: number | "auto";
   /** Optional lock wait budget in milliseconds (`0` disables). */
   readonly lockTimeoutMs?: number;
   /** Optional statement timeout in milliseconds (`0` disables). */
   readonly statementTimeoutMs?: number;
 }
 
-interface VectorIndexStatsRow {
-  readonly method: VectorIndexMethod;
-  readonly index_name: string;
-  readonly index_size_bytes: string;
-  readonly embedded_records: string;
-  readonly prism_nlist: number | null;
-  readonly prism_pinned_nlist: number | null;
-  readonly prism_ideal_nlist: number | null;
-  readonly prism_target_pages: number | null;
-  readonly prism_target_entries: number | null;
-  readonly prism_nlevels: number | null;
-  readonly prism_posting_pages: string | null;
-  readonly prism_needs_reindex: boolean | null;
-  readonly prism_reindex_reason: PrismReindexReason | null;
-}
-
 const reindexOptionsSchema = z.strictObject({
   concurrently: z.boolean().optional(),
-  nlist: z.union([z.int().min(1).max(2_000_000), z.literal("auto")]).optional(),
   lockTimeoutMs: z.int().nonnegative().optional(),
   statementTimeoutMs: z.int().nonnegative().optional(),
 });
@@ -332,100 +286,10 @@ function parseId(id: string): string {
   return result.data;
 }
 
-export async function vectorIndexStats(
-  index: Index,
-): Promise<VectorIndexStats> {
-  const { sql } = index;
-  const [row] = await runSql(
-    sql<VectorIndexStatsRow[]>`
-      select
-        method
-      , index_name
-      , index_size_bytes::text as index_size_bytes
-      , embedded_records::text as embedded_records
-      , prism_nlist
-      , prism_pinned_nlist
-      , prism_ideal_nlist
-      , prism_target_pages
-      , prism_target_entries
-      , prism_nlevels
-      , prism_posting_pages::text as prism_posting_pages
-      , prism_needs_reindex
-      , prism_reindex_reason
-      from ${sql(index.schema)}.vector_index_stats()
-    `,
-    {
-      spanName: "vectorIndexStats",
-      dbOperationName: "SELECT",
-      namespace: index.schema,
-    },
-  );
-  if (!row) {
-    throw new Error("vector_index_stats returned no rows");
-  }
-  const prism: PrismIndexStats | null =
-    row.method === "prism" &&
-    row.prism_nlist !== null &&
-    row.prism_ideal_nlist !== null &&
-    row.prism_target_pages !== null &&
-    row.prism_target_entries !== null &&
-    row.prism_nlevels !== null &&
-    row.prism_posting_pages !== null &&
-    row.prism_needs_reindex !== null
-      ? Object.freeze({
-          nlist: row.prism_nlist,
-          pinnedNlist: row.prism_pinned_nlist,
-          idealNlist: row.prism_ideal_nlist,
-          targetPages: row.prism_target_pages,
-          targetEntries: row.prism_target_entries,
-          nlevels: row.prism_nlevels,
-          postingPages: Number(row.prism_posting_pages),
-          needsReindex: row.prism_needs_reindex,
-          reindexReason: row.prism_reindex_reason,
-        })
-      : null;
-
-  return Object.freeze({
-    method: row.method,
-    indexName: row.index_name,
-    indexSizeBytes: Number(row.index_size_bytes),
-    embeddedRecords: Number(row.embedded_records),
-    prism,
-  });
-}
-
-async function applyPrismNlistOption(
-  sql: postgres.ISql,
-  schema: string,
-  indexName: string,
-  nlist: number | "auto" | undefined,
-): Promise<void> {
-  if (nlist === undefined) return;
-  if (nlist === "auto") {
-    await runSql(
-      sql`alter index ${sql(schema)}.${sql(indexName)} reset (nlist)`,
-      {
-        spanName: "alterVectorIndexNlist",
-        dbOperationName: "ALTER",
-        namespace: schema,
-      },
-    );
-  } else {
-    await runSql(
-      sql`alter index ${sql(schema)}.${sql(indexName)} set (nlist = ${sql.unsafe(String(nlist))})`,
-      {
-        spanName: "alterVectorIndexNlist",
-        dbOperationName: "ALTER",
-        namespace: schema,
-      },
-    );
-  }
-}
-
 export async function reindexVectorIndex(
   index: Index,
   options?: ReindexVectorIndexOptions,
-): Promise<VectorIndexStats> {
+): Promise<void> {
   const parsed = reindexOptionsSchema.safeParse(options ?? {});
   if (!parsed.success) {
     const issues = parsed.error.issues.map(toValidationIssue);
@@ -443,24 +307,9 @@ export async function reindexVectorIndex(
   }
   const {
     concurrently = false,
-    nlist,
     lockTimeoutMs,
     statementTimeoutMs,
   } = parsed.data;
-  if (nlist !== undefined && index.vectorIndex !== "prism") {
-    throw new InvalidInputError(
-      "Invalid reindexVectorIndex options: nlist is only supported for prism vector indexes",
-      {
-        issues: [
-          {
-            code: "custom",
-            message: "nlist is only supported for prism vector indexes",
-            path: ["nlist"],
-          },
-        ],
-      },
-    );
-  }
   const indexName = vectorIndexNameForMethod(index.vectorIndex);
   const { sql } = index;
 
@@ -509,7 +358,6 @@ export async function reindexVectorIndex(
         );
       }
       await refreshPrismRowEstimate(reserved, index);
-      await applyPrismNlistOption(reserved, index.schema, indexName, nlist);
       await runSql(
         reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
         {
@@ -543,7 +391,6 @@ export async function reindexVectorIndex(
         true,
       );
       await refreshPrismRowEstimate(tx, index);
-      await applyPrismNlistOption(tx, index.schema, indexName, nlist);
       await runSql(tx`reindex index ${tx(index.schema)}.${tx(indexName)}`, {
         spanName: "reindexVectorIndex",
         dbOperationName: "REINDEX",
@@ -551,8 +398,6 @@ export async function reindexVectorIndex(
       });
     });
   }
-
-  return vectorIndexStats(index);
 }
 
 /**

@@ -59,6 +59,11 @@ const hnswVectorIndexSchema = z
   })
   .strict();
 
+/**
+ * Experimental: the `prism` method uses pg_vectorsearch, which is not GA yet.
+ * This option and its behavior can change or be removed in a minor release
+ * until pg_vectorsearch is GA.
+ */
 const prismVectorIndexSchema = z
   .object({
     method: z.literal("prism"),
@@ -107,7 +112,19 @@ export type IndexConfig = z.input<typeof indexConfigSchema>;
 export type NormalizedIndexConfig = z.output<typeof indexConfigSchema>;
 
 export type VectorType = NormalizedIndexConfig["vectorType"];
+/**
+ * Vector index access method. `hnsw` (pgvector) is the default.
+ *
+ * @experimental `prism` (pg_vectorsearch) is experimental. It can change or be
+ * removed in a minor release until pg_vectorsearch is GA.
+ */
 export type VectorIndexMethod = "hnsw" | "prism";
+/**
+ * Vector index creation options.
+ *
+ * @experimental The `{ method: "prism" }` variant is experimental. It can
+ * change or be removed in a minor release until pg_vectorsearch is GA.
+ */
 export type VectorIndexConfig = NonNullable<IndexConfig["vectorIndex"]>;
 export type Bm25Config = NonNullable<IndexConfig["bm25"]>;
 export type NormalizedBm25Config = NormalizedIndexConfig["bm25"];

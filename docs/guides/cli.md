@@ -48,6 +48,9 @@ worker:
   batchSize: 100
 ```
 
+`index.vectorIndex` is `hnsw` (default) or `prism`. `prism` is experimental:
+see [Indexes](indexes.md#vector-index-access-method-hnsw-vs-prism).
+
 Set database/provider secrets in the environment or `.env`, not tool inputs or
 command-line arguments. Config lookup is `--config`, then `SEARCHGRES_CONFIG`,
 then `./searchgres.yaml`. YAML (`.yaml`/`.yml`) and JSON5 are supported.
@@ -97,10 +100,15 @@ searchgres init
 searchgres init --if-not-exists
 searchgres migrate
 searchgres info
-searchgres vector-index stats
 searchgres vector-index reindex --concurrently
 searchgres destroy --yes
 ```
+
+`vector-index reindex` rebuilds the vector index (`--concurrently`,
+`--lock-timeout`, `--statement-timeout`). A `prism` index needs one rebuild
+after the first bulk load and embedding drain. The CLI does not report vector
+index health; see
+[Evaluate and maintain a `prism` index](indexes.md#evaluate-and-maintain-a-prism-index).
 
 `init --if-not-exists` accepts only an existing valid index with matching shape.
 It never silently accepts an unrelated same-named schema. `migrate` upgrades an
