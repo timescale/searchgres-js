@@ -58,6 +58,17 @@ await ensureExtensions(sql);
 await createIndex(sql, "docs_index", { dimensions: 1536 });
 ```
 
+`pg_textsearch` sends PostgreSQL `NOTICE` messages when it builds or rebuilds
+its BM25 index, for example `BM25 index build started for relation
+record_content_bm25_idx`. postgres.js prints notices to the console by default.
+To drop them or send them to your logger, set `onnotice` on the pool:
+
+```ts
+const sql = postgres(process.env.DATABASE_URL, {
+  onnotice: () => {}, // or (notice) => logger.debug(notice.message)
+});
+```
+
 ## 3. Open it
 
 Opening returns a handle you use for everything else. You supply the embedding
@@ -74,6 +85,9 @@ const index = await openIndex(sql, "docs_index", {
   embedding: openai.embedding("text-embedding-3-small"),
 });
 ```
+
+To use a local or other OpenAI-compatible endpoint instead, see
+[Choose an embedding model](guides/embeddings.md#choose-an-embedding-model).
 
 ## 4. Write records
 

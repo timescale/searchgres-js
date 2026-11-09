@@ -19,6 +19,43 @@ appear in semantic results.
 
 You choose how step 3 runs: a bounded pass on demand, or a continuous worker.
 
+## Choose an embedding model
+
+`openIndex()` takes an AI SDK embedding model object. The examples use
+`openai.embedding("text-embedding-3-small")` from `@ai-sdk/openai`. For another
+OpenAI-compatible endpoint, such as a local Ollama server or a self-hosted
+proxy, create a provider with its own base URL and use its `embedding()` method
+(`embeddingModel()` is the same method under a longer name):
+
+```ts
+import { createOpenAI } from "@ai-sdk/openai";
+import { openIndex } from "searchgres";
+
+const local = createOpenAI({
+  baseURL: "http://127.0.0.1:11434/v1", // the complete API root
+  apiKey: process.env.LOCAL_EMBEDDING_API_KEY ?? "unused",
+});
+
+const index = await openIndex(sql, "docs_index", {
+  embedding: local.embedding("nomic-embed-text"),
+});
+```
+
+The provider sends an API key on every request. If you omit `apiKey`, it reads
+`OPENAI_API_KEY` and fails when that variable is not set. For a server that
+ignores the key, pass any placeholder string. The index `dimensions` must match
+the model output (`nomic-embed-text` produces 768-dimensional vectors).
+
+Pass a model object, not a model id string. `openIndex()` rejects a string such
+as `"text-embedding-3-small"` with `InvalidConfigError`, because the AI SDK
+sends a string id to its global default provider, which is the Vercel AI
+Gateway unless your application sets another one.
+
+The default batch size comes from the model (see [Tuning](#tuning)). For
+`@ai-sdk/openai` models that is 2,048 inputs per provider call, which can
+overload a local or self-hosted server. Set `batchSize` explicitly for those
+endpoints; 16 to 64 is a reasonable starting point to tune from.
+
 ## Supplying a vector yourself
 
 If you already have a vector, pass it and no queue work is created:
@@ -239,6 +276,9 @@ await index.pruneEmbeddingQueue({ retentionMs: 604_800_000 });
 
 All durations are milliseconds.
 
+- **`batchSize`** (default: the model's `maxEmbeddingsPerCall`, or `10` when the
+  model reports no finite limit). Rows per claim and per provider call. A larger
+  value is capped at the model's limit.
 - **`leaseDurationMs`** (default `300000`) — how long a claimed row is hidden from
   other drainers. If a drainer crashes, its rows reappear after the lease.
 - **`maxAttempts`** (default `3`) — queue-claim attempt threshold used by each

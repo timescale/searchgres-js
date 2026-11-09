@@ -104,11 +104,29 @@ searchgres vector-index reindex --concurrently
 searchgres destroy --yes
 ```
 
+`init` first installs the required PostgreSQL extensions that are missing:
+`vector`, `pg_textsearch`, and `ltree`, plus `pg_vectorsearch` when
+`index.vectorIndex` is `prism`. It runs `CREATE EXTENSION ... WITH SCHEMA
+public` for each missing extension. An extension that is already installed must
+be in `public` and meet the minimum version in
+[Installation](../installation.md#postgresql); `init` does not move or upgrade
+it. `init --if-not-exists` skips this step when the schema already exists.
+
+In the standard builds, `vector`, `pg_textsearch`, and `pg_vectorsearch` are
+not trusted extensions, so `CREATE EXTENSION` for them needs a superuser.
+`ltree` is trusted: a role with `CREATE` privilege on the database can install
+it. Managed services can use different rules; check
+`pg_available_extension_versions.trusted`. If the CLI role cannot install an
+extension, `init` fails with error code `EXTENSION` (`permission_denied`). In
+that case, an administrator installs the extensions in `public` first (for
+example `create extension if not exists vector with schema public`), and `init`
+then only verifies them. `pg_textsearch` must also be in
+`shared_preload_libraries`.
+
 `vector-index reindex` rebuilds the vector index (`--concurrently`,
 `--lock-timeout`, `--statement-timeout`). A `prism` index needs one rebuild
-after the first bulk load and embedding drain. The CLI does not report vector
-index health; see
-[Evaluate and maintain a `prism` index](indexes.md#evaluate-and-maintain-a-prism-index).
+after the first bulk load and embedding drain; see
+[Use an experimental `prism` index](#use-an-experimental-prism-index).
 
 `init --if-not-exists` accepts only an existing valid index with matching shape.
 It never silently accepts an unrelated same-named schema. `migrate` upgrades an
@@ -272,6 +290,38 @@ queue/record IDs, attempt counts, and timestamps for diagnosis and retry.
 paginated traversal and sums retried/skipped counts; it is not a snapshot and
 does not repeatedly chase failures. Prune uses core's terminal-row retention
 based on enqueue time. There is no prune dry-run API.
+
+## Use an experimental `prism` index
+
+`prism` is the `pg_vectorsearch` vector index access method. It is
+experimental; read
+[Vector index access method](indexes.md#vector-index-access-method-hnsw-vs-prism)
+before you use it. A new `prism` index is built on an empty table, so it starts
+with one list and must be rebuilt after the first load:
+
+1. Set `index.vectorIndex: prism` in the config (or pass
+   `--vector-index prism` to `searchgres config`).
+2. Run `searchgres init`. It also installs `pg_vectorsearch` (see
+   [Provisioning](#provisioning) for the privileges).
+3. Import the records, for example `searchgres import -r ./documents --tree docs`.
+4. Drain the embedding queue with `searchgres embeddings process` (or a
+   worker). Run `searchgres embeddings status` until `pending.total` is `0`.
+   Check `failed.terminal` too: those records have no vector, so semantic
+   search cannot find them.
+5. Run `searchgres vector-index reindex` once. It runs `ANALYZE` on the record
+   table and then rebuilds the index, so the list count fits the current row
+   count. Add `--concurrently` if the index must stay available to other
+   sessions during the rebuild.
+6. Evaluate the index with the SQL in
+   [Evaluate and maintain a `prism` index](indexes.md#evaluate-and-maintain-a-prism-index).
+   The CLI does not report vector index health.
+
+A rebuild of a large table can take longer than the default session timeouts
+(`database.session.statementTimeout: 30s`, `transactionTimeout: 35s`). For
+that run, raise both values in the config.
+
+If `init` reports `pg_vectorsearch` with reason `incomplete_setup`, a superuser
+must run `select public.pg_vectorsearch_setup_pgvector_compat()`.
 
 ## Errors, shutdown, and security
 
