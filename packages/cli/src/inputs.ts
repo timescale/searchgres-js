@@ -2,6 +2,7 @@
 // Core validates all database operations; these schemas also support offline import
 // validation, the filter DSL, and MCP tool discovery.
 import { z } from "zod";
+import { filterNodeError } from "./filter/issues.ts";
 
 export const uuidSchema = z.uuidv7();
 export const timestampSchema = z.iso.datetime({ offset: true });
@@ -58,7 +59,7 @@ type FilterNode =
   | { readonly tree: string }
   | { readonly lquery: string }
   | { readonly ltxtquery: string }
-  | { readonly meta: Record<string, unknown> }
+  | { readonly meta: z.input<typeof jsonObjectSchema> }
   | { readonly metaPredicate: string }
   | { readonly temporalWithin: readonly [string, string] }
   | { readonly temporalOverlaps: readonly [string, string] }
@@ -68,28 +69,31 @@ type FilterNode =
   | { readonly regexp: string };
 const range = z.tuple([timestampSchema, timestampSchema]);
 const nonempty = z.string().min(1);
-export const filterSchema: z.ZodType<FilterNode> = z.lazy(() =>
-  z.union([
-    z.strictObject({ and: z.array(filterSchema).min(2) }),
-    z.strictObject({ or: z.array(filterSchema).min(2) }),
-    z.strictObject({ not: filterSchema }),
-    z.strictObject({ tree: treePathSchema }),
-    z.strictObject({ lquery: nonempty }),
-    z.strictObject({ ltxtquery: nonempty }),
-    z.strictObject({
-      meta: jsonObjectSchema.refine(
-        (v) => Object.keys(v).length > 0,
-        "meta filter must not be an empty object",
-      ),
-    }),
-    z.strictObject({ metaPredicate: nonempty }),
-    z.strictObject({ temporalWithin: range }),
-    z.strictObject({ temporalOverlaps: range }),
-    z.strictObject({ temporalBefore: timestampSchema }),
-    z.strictObject({ temporalAfter: timestampSchema }),
-    z.strictObject({ temporalContains: timestampSchema }),
-    z.strictObject({ regexp: nonempty }),
-  ]),
+export const filterSchema: z.ZodType<FilterNode, FilterNode> = z.lazy(() =>
+  z.union(
+    [
+      z.strictObject({ and: z.array(filterSchema).min(2) }),
+      z.strictObject({ or: z.array(filterSchema).min(2) }),
+      z.strictObject({ not: filterSchema }),
+      z.strictObject({ tree: treePathSchema }),
+      z.strictObject({ lquery: nonempty }),
+      z.strictObject({ ltxtquery: nonempty }),
+      z.strictObject({
+        meta: jsonObjectSchema.refine(
+          (v) => Object.keys(v).length > 0,
+          "meta filter must not be an empty object",
+        ),
+      }),
+      z.strictObject({ metaPredicate: nonempty }),
+      z.strictObject({ temporalWithin: range }),
+      z.strictObject({ temporalOverlaps: range }),
+      z.strictObject({ temporalBefore: timestampSchema }),
+      z.strictObject({ temporalAfter: timestampSchema }),
+      z.strictObject({ temporalContains: timestampSchema }),
+      z.strictObject({ regexp: nonempty }),
+    ],
+    { error: filterNodeError },
+  ),
 );
 export const searchParamsSchema = z.strictObject({
   semantic: nonempty.optional(),

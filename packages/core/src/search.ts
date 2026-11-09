@@ -7,6 +7,7 @@ import {
   InvalidInputError,
   SearchgresError,
 } from "./errors.ts";
+import { filterNodeError, resolveFilterIssues } from "./filter-issues.ts";
 import { isValidTreePath } from "./identifiers.ts";
 import type { Index } from "./open-index.ts";
 import { mapInputSqlError } from "./sql/errors.ts";
@@ -75,23 +76,26 @@ type FilterNode =
   | { readonly temporalContains: Timestamp }
   | { readonly regexp: z.input<typeof nonEmptyString> };
 
-const filterSchema: z.ZodType<FilterNode> = z.lazy(() =>
-  z.union([
-    z.strictObject({ and: z.array(filterSchema).min(2) }),
-    z.strictObject({ or: z.array(filterSchema).min(2) }),
-    z.strictObject({ not: filterSchema }),
-    z.strictObject({ tree: treeFilterLeaf }),
-    z.strictObject({ lquery: nonEmptyString }),
-    z.strictObject({ ltxtquery: nonEmptyString }),
-    z.strictObject({ meta: metaFilterLeaf }),
-    z.strictObject({ metaPredicate: nonEmptyString }),
-    z.strictObject({ temporalWithin: rangeLeaf }),
-    z.strictObject({ temporalOverlaps: rangeLeaf }),
-    z.strictObject({ temporalBefore: timestampSchema }),
-    z.strictObject({ temporalAfter: timestampSchema }),
-    z.strictObject({ temporalContains: timestampSchema }),
-    z.strictObject({ regexp: nonEmptyString }),
-  ]),
+const filterSchema: z.ZodType<FilterNode, FilterNode> = z.lazy(() =>
+  z.union(
+    [
+      z.strictObject({ and: z.array(filterSchema).min(2) }),
+      z.strictObject({ or: z.array(filterSchema).min(2) }),
+      z.strictObject({ not: filterSchema }),
+      z.strictObject({ tree: treeFilterLeaf }),
+      z.strictObject({ lquery: nonEmptyString }),
+      z.strictObject({ ltxtquery: nonEmptyString }),
+      z.strictObject({ meta: metaFilterLeaf }),
+      z.strictObject({ metaPredicate: nonEmptyString }),
+      z.strictObject({ temporalWithin: rangeLeaf }),
+      z.strictObject({ temporalOverlaps: rangeLeaf }),
+      z.strictObject({ temporalBefore: timestampSchema }),
+      z.strictObject({ temporalAfter: timestampSchema }),
+      z.strictObject({ temporalContains: timestampSchema }),
+      z.strictObject({ regexp: nonEmptyString }),
+    ],
+    { error: filterNodeError },
+  ),
 );
 
 /**
@@ -547,7 +551,7 @@ function throwInvalidFilter(message: string): never {
 }
 
 function throwInvalidOptions(error: z.ZodError): never {
-  const issues = error.issues.map(toValidationIssue);
+  const issues = resolveFilterIssues(error.issues).map(toValidationIssue);
   const first = issues[0];
   const detail = first
     ? `${first.path.join(".") || "options"}: ${first.message}`
