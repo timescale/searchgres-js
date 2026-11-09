@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InvalidConfigError, TreePathError } from "./errors.ts";
+import { toValidationIssue } from "./validation.ts";
 
 /** PostgreSQL's maximum identifier length at the default NAMEDATALEN (64). */
 export const MAX_IDENTIFIER_LENGTH = 63;
@@ -38,7 +39,10 @@ export function assertSchemaName(schema: string): string {
   if (!result.success) {
     throw new InvalidConfigError(
       `Invalid schema name ${JSON.stringify(schema)}: expected a lowercase PostgreSQL identifier matching [a-z_][a-z0-9_]* and at most ${MAX_IDENTIFIER_LENGTH} characters`,
-      { cause: result.error },
+      {
+        cause: result.error,
+        issues: result.error.issues.map(toValidationIssue),
+      },
     );
   }
   return result.data;

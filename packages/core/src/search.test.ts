@@ -53,6 +53,23 @@ test("rejects cursors and order on a ranked search", async () => {
   });
 });
 
+test("uuid and timestamp errors say what format is expected", async () => {
+  await assert.rejects(
+    () =>
+      fakeIndex().search({
+        after: "8f14e45f-ceea-4e7a-8b6c-1d2e3f4a5b6c",
+      } as never),
+    /after: expected a UUIDv7/,
+  );
+  await assert.rejects(
+    () =>
+      fakeIndex().search({
+        filter: { temporalBefore: "2026-01-02T03:04:05" },
+      } as never),
+    /filter\.temporalBefore: expected an ISO 8601 timestamp with a UTC offset or Z/,
+  );
+});
+
 test("rejects supplying both after and before", async () => {
   await rejects({
     after: "019ce89d-f8b4-7000-8000-000000000001",

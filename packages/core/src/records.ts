@@ -50,7 +50,7 @@ interface PatchRow extends RecordRow {
   readonly updated: boolean;
 }
 
-const idSchema = z.uuidv7();
+const idSchema = z.uuidv7({ error: "expected a UUIDv7" });
 
 const patchSchema = z
   .object({
@@ -134,7 +134,7 @@ export async function getByName(
     "getRecordByName",
   );
   if (!row) {
-    throw new NotFoundError(`${treePath}/${name}`);
+    throw new NotFoundError({ tree: treePath, name });
   }
   return mapRecord(row);
 }
@@ -230,7 +230,7 @@ export async function deleteByName(
     "deleteRecordByName",
   );
   if (!row?.ok) {
-    throw new NotFoundError(`${treePath}/${name}`);
+    throw new NotFoundError({ tree: treePath, name });
   }
 }
 

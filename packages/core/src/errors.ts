@@ -312,16 +312,28 @@ export class TransactionTimeoutError extends SearchgresError {
 }
 
 export class NotFoundError extends SearchgresError {
-  /** The id or human-readable `(tree, name)` address that was requested. */
+  /**
+   * The requested id, or a human-readable `(tree, name)` address such as
+   * `tree "docs", name "intro"`.
+   */
   readonly target: string;
 
-  constructor(target: string, options?: ErrorOptions) {
+  constructor(
+    target: string | { readonly tree: string; readonly name: string },
+    options?: ErrorOptions,
+  ) {
+    const address =
+      typeof target === "string"
+        ? undefined
+        : `tree ${JSON.stringify(target.tree)}, name ${JSON.stringify(target.name)}`;
     super(
       "NOT_FOUND",
-      `Record ${JSON.stringify(target)} was not found`,
+      address === undefined
+        ? `Record ${JSON.stringify(target)} was not found`
+        : `Record with ${address} was not found`,
       options,
     );
-    this.target = target;
+    this.target = address ?? (target as string);
   }
 }
 

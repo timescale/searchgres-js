@@ -10,7 +10,7 @@ import {
 import { outputFormat, writeStructuredOutput } from "./format.ts";
 import { presentQueueStats } from "./presentation/index.ts";
 import { installShutdown, openRuntime } from "./runtime/index.ts";
-import { InputError } from "./runtime/report.ts";
+import { InputError, safeError } from "./runtime/report.ts";
 
 /** One forward traversal, not a snapshot and not an automatic failure retry loop. */
 export async function retryAll(
@@ -68,7 +68,26 @@ export async function runEmbeddings(
       if (count < 1)
         throw new InputError("embeddings worker requires at least one worker");
       if (count > 64) throw new InputError("--workers must be at most 64");
+      // A worker stops by itself only after a fault that a retry cannot fix
+      // (a wrong vector dimension). Exit with status 1 when all workers stop.
+      let stopped = 0;
+      let allStopped = () => {};
+      const stoppedAll = new Promise<void>((resolve) => {
+        allStopped = resolve;
+      });
       runtime.startEmbeddingWorkers(count, {
+        onError: (error, context) => {
+          console.error(
+            JSON.stringify({
+              error: safeError(error),
+              ...(context.stopped ? { workerStopped: true } : {}),
+            }),
+          );
+          if (context.stopped && ++stopped === count) {
+            process.exitCode = 1;
+            allStopped();
+          }
+        },
         ...(flags.has("batch-size")
           ? { batchSize: integer("batch-size") as number }
           : {}),
@@ -83,13 +102,16 @@ export async function runEmbeddings(
       console.error(
         `searchgres.js embedding worker pool running (${count} workers)`,
       );
-      await new Promise<void>((resolve) => {
-        if (controller.signal.aborted) resolve();
-        else
-          controller.signal.addEventListener("abort", () => resolve(), {
-            once: true,
-          });
-      });
+      await Promise.race([
+        stoppedAll,
+        new Promise<void>((resolve) => {
+          if (controller.signal.aborted) resolve();
+          else
+            controller.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            });
+        }),
+      ]);
       return;
     }
     await runtime.run(async () => {
@@ -109,8 +131,14 @@ export async function runEmbeddings(
               : {}),
             signal: controller.signal,
           };
-          const result = await index.processEmbeddings(options);
-          output(result);
+          const { sampleError, ...result } =
+            await index.processEmbeddings(options);
+          // Show only the safe error class (for example an HTTP status), not
+          // remote provider text. PostgreSQL keeps the bounded diagnostic.
+          output({
+            ...result,
+            sampleError: sampleError === null ? null : safeError(sampleError),
+          });
           if (result.failed > 0) process.exitCode = 1;
           break;
         }

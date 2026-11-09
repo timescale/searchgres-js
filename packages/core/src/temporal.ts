@@ -5,10 +5,13 @@ import { z } from "zod";
  * carries an explicit offset or `Z`. Strings without an offset are rejected so a
  * value's instant is never silently reinterpreted in the server's time zone.
  */
-export const timestampSchema = z.union([
-  z.date(),
-  z.iso.datetime({ offset: true }),
-]);
+const TIMESTAMP_MESSAGE =
+  "expected an ISO 8601 timestamp with a UTC offset or Z, for example 2026-01-02T03:04:05Z";
+
+export const timestampSchema = z.union(
+  [z.date(), z.iso.datetime({ offset: true, error: TIMESTAMP_MESSAGE })],
+  { error: `${TIMESTAMP_MESSAGE}, or a Date` },
+);
 
 export type Timestamp = z.input<typeof timestampSchema>;
 

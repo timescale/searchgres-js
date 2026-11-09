@@ -215,9 +215,20 @@ searchgres embeddings prune --older-than 7d --yes
 ```
 
 `process` drains currently claimable work and exits, reporting `claimed`,
-`embedded`, `failed`, `cancelled`, and `remaining`. Reported failures exit `1`;
-remaining work alone is not failure. Leased or delayed rows may remain even if
-nothing is claimable. Limits and cancellation are checked between batches.
+`embedded`, `failed`, `cancelled`, `remaining`, and `sampleError`. Reported
+failures exit `1`; remaining work alone is not failure. Leased or delayed rows
+may remain even if nothing is claimable. Limits and cancellation are checked
+between batches. `sampleError` is `null`, or the first failure of the pass as
+`{ code, message }` with only a safe failure class, for example
+`Failed to generate embeddings (HTTP 404)`. The provider's own text stays in
+PostgreSQL.
+
+If the model returns vectors with the wrong number of dimensions, `process`
+fails with `DIMENSION_MISMATCH` and exit `1`, and the rows of that batch fail
+permanently (no retries). `worker` logs the error with `"workerStopped": true`,
+and that worker stops; when all workers have stopped, the command exits `1`.
+Fix the model or index configuration, then run
+`searchgres embeddings retry --all --yes`.
 
 `status` and the `queue` object in `info` make queue subsets explicit:
 

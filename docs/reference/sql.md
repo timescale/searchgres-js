@@ -152,6 +152,9 @@ select docs_index.complete_embedding(
 select docs_index.fail_embedding(1, 'provider timeout');
 select docs_index.release_embedding(1, interval '5 seconds');
 
+-- fail a claim at once, with no retry (for example a wrong vector dimension)
+select docs_index.fail_embedding_permanently(1, 'dimension mismatch');
+
 -- inspect, retry failures, and prune terminal rows
 select * from docs_index.embedding_queue_stats();
 select docs_index.pending_embedding_count();

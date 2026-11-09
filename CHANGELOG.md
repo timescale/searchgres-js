@@ -53,6 +53,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A wrong-dimension embedding model no longer loops forever. In
+  `processEmbeddings()` and the embedding worker, the claimed batch now fails
+  permanently at once (no retries), so the rows appear in `queueStats()` and
+  `listEmbeddingFailures()`. The pass throws `DimensionMismatchError` and claims
+  no more rows. The worker reports the error to `onError` with the new
+  `WorkerErrorContext.stopped: true` and stops. Before, the rows were released
+  and the worker retried them every few seconds without recording a failure.
+  The CLI `embeddings worker` command exits `1` when all its workers stop. A
+  new schema-local routine, `<schema>.fail_embedding_permanently()`, records
+  these failures.
+- `ProcessEmbeddingsResult` has a new `sampleError` field: the first error that
+  made rows fail in the pass, or `null`. Before, a pass that failed (for example
+  with a mistyped model id) returned only counts. The CLI prints only its safe
+  error class (for example `HTTP 404`).
+- Clearer validation and error messages: a UUID that is not a UUIDv7 now says
+  `expected a UUIDv7`, and a timestamp without an offset says it needs a UTC
+  offset or `Z`. An invalid schema name now carries `issues`. `createIndex()`
+  on an existing schema says `Schema "..." already exists` instead of calling
+  it an index. A `NotFoundError` for a `(tree, name)` address now reads
+  `Record with tree "docs", name "intro" was not found` instead of
+  `"docs/intro"`, which looked like a slash path.
 - Filter validation errors now name the problem and its location: an unknown
   filter key (with a hint to use `meta` for metadata fields), a node with zero
   or several keys (with a hint to use `and`), or an invalid value at its full

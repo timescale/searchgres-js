@@ -73,8 +73,11 @@ batch writes) `position`. Thrown for a supplied embedding of the wrong length, o
 when your embedding model returns vectors of a different size than the index was
 created with.
 
+In `processEmbeddings()` and the embedding worker, a wrong model output fails
+the claimed batch permanently (no retries) and stops the pass or the worker.
+
 **Recover:** ensure `createIndex({ dimensions })` matches your model's output;
-re-embed if you changed models.
+re-embed if you changed models. Then retry the failed queue rows.
 
 ## Conflicts and versions
 

@@ -99,7 +99,7 @@ async function createIndexSchema(
     );
     if (existing?.present) {
       throw new ConflictError(
-        `Index schema ${JSON.stringify(indexSchema)} already exists`,
+        `Schema ${JSON.stringify(indexSchema)} already exists. createIndex creates a new schema for each index; use openIndex for an existing index`,
       );
     }
 

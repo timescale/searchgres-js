@@ -25,7 +25,12 @@ test("schema names use a predictable lowercase PostgreSQL subset", () => {
     "x".repeat(MAX_IDENTIFIER_LENGTH + 1),
   ]) {
     assert.equal(isValidSchemaName(schema), false, schema);
-    assert.throws(() => assertSchemaName(schema), InvalidConfigError);
+    assert.throws(
+      () => assertSchemaName(schema),
+      (error: unknown) =>
+        error instanceof InvalidConfigError && error.issues.length > 0,
+      schema,
+    );
   }
 });
 

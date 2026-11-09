@@ -118,8 +118,8 @@ const searchOptionsSchema = z
     fulltextWeight: z.number().min(0).max(1).optional(),
     semanticWeight: z.number().min(0).max(1).optional(),
     order: z.enum(["asc", "desc"]).optional(),
-    after: z.uuidv7().optional(),
-    before: z.uuidv7().optional(),
+    after: z.uuidv7({ error: "expected a UUIDv7" }).optional(),
+    before: z.uuidv7({ error: "expected a UUIDv7" }).optional(),
   })
   .superRefine((options, context) => {
     const hasSemantic =

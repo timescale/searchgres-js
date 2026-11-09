@@ -186,8 +186,13 @@ export async function openRuntime(
             index.startEmbeddingWorker({
               intervalMs: config.worker.interval,
               batchSize: config.worker.batchSize,
-              onError: (error) =>
-                console.error(JSON.stringify({ error: safeError(error) })),
+              onError: (error, context) =>
+                console.error(
+                  JSON.stringify({
+                    error: safeError(error),
+                    ...(context.stopped ? { workerStopped: true } : {}),
+                  }),
+                ),
               ...options,
             }),
           );

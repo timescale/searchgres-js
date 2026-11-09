@@ -11,6 +11,7 @@ import {
   InvalidIndexError,
   InvalidInputError,
   LockTimeoutError,
+  NotFoundError,
   parseSchemaVersion,
   RateLimitError,
   SchemaVersionError,
@@ -28,6 +29,20 @@ test("all typed errors retain a stable code, class name, and cause", () => {
   assert.equal(error.name, "ConflictError");
   assert.equal(error.code, "CONFLICT");
   assert.equal(error.cause, cause);
+});
+
+test("NotFoundError renders an id or a (tree, name) address", () => {
+  const byId = new NotFoundError("019ce89d-f8b4-7000-8000-000000000001");
+  assert.equal(
+    byId.message,
+    'Record "019ce89d-f8b4-7000-8000-000000000001" was not found',
+  );
+  const byName = new NotFoundError({ tree: "scratch", name: "nope" });
+  assert.equal(
+    byName.message,
+    'Record with tree "scratch", name "nope" was not found',
+  );
+  assert.equal(byName.target, 'tree "scratch", name "nope"');
 });
 
 test("errors retain the fields callers need to recover", () => {
