@@ -34,6 +34,7 @@ import {
   randomTestSchema,
   schemaExists,
 } from "./support/db.ts";
+import { mockEmbeddingModel } from "./support/embedding.ts";
 
 let sql: Sql;
 
@@ -95,12 +96,13 @@ test("opens an immutable index with catalog-derived vector shape", async () => {
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const model = mockEmbeddingModel({});
+    const index = await openIndex(sql, schema, { embedding: model });
 
     assert.equal(index.schema, schema);
     assert.equal(index.vectorType, "halfvec");
     assert.equal(index.dimensions, 4);
-    assert.equal(index.embedding, "mock-embedding");
+    assert.equal(index.embedding, model);
   } finally {
     await dropTestSchema(sql, schema);
   }
@@ -115,9 +117,10 @@ test("openIndex validates its options before touching the database", async () =>
     ["empty object", {}],
     ["null embedding", { embedding: null }],
     ["empty model id", { embedding: "" }],
+    ["model id string", { embedding: "text-embedding-3-small" }],
     ["object without doEmbed", { embedding: { modelId: "x" } }],
-    ["non-function truncate", { embedding: "m", truncate: "24000" }],
-    ["unknown key", { embedding: "m", truncator: noTruncation }],
+    ["non-function truncate", { embedding: noEmbedding, truncate: "24000" }],
+    ["unknown key", { embedding: noEmbedding, truncator: noTruncation }],
   ];
   for (const [label, options] of invalid) {
     await assert.rejects(
@@ -131,12 +134,17 @@ test("openIndex validates its options before touching the database", async () =>
       label,
     );
   }
+  await assert.rejects(
+    () =>
+      openIndex(sql, missing, {
+        embedding: "text-embedding-3-small",
+      } as unknown as OpenIndexOptions),
+    /not a model id string .*Vercel AI Gateway/,
+  );
 
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const byId = await openIndex(sql, schema, { embedding: "mock-embedding" });
-    assert.equal(byId.embedding, "mock-embedding");
     const withoutModel = await openIndex(sql, schema, {
       embedding: noEmbedding,
       truncate: noTruncation,
@@ -233,19 +241,19 @@ test("rejects plain schemas and unsupported schema formats", async () => {
   const versionedSchema = randomTestSchema();
   try {
     await assert.rejects(
-      () => openIndex(sql, plainSchema, { embedding: "mock-embedding" }),
+      () => openIndex(sql, plainSchema, { embedding: noEmbedding }),
       /is not a searchgres index: the schema does not exist$/,
     );
     await sql`create schema ${sql(plainSchema)}`;
     await assert.rejects(
-      () => openIndex(sql, plainSchema, { embedding: "mock-embedding" }),
+      () => openIndex(sql, plainSchema, { embedding: noEmbedding }),
       InvalidIndexError,
     );
 
     await createIndex(sql, versionedSchema, { dimensions: 4 });
     await sql`drop index ${sql(versionedSchema)}.record_embedding_hnsw_idx`;
     await assert.rejects(
-      () => openIndex(sql, versionedSchema, { embedding: "mock-embedding" }),
+      () => openIndex(sql, versionedSchema, { embedding: noEmbedding }),
       /: the vector index \(record_embedding_hnsw_idx or record_embedding_prism_idx\) does not exist$/,
     );
     await sql`
@@ -258,7 +266,7 @@ test("rejects plain schemas and unsupported schema formats", async () => {
       set version = '1'
     `;
     await assert.rejects(
-      () => openIndex(sql, versionedSchema, { embedding: "mock-embedding" }),
+      () => openIndex(sql, versionedSchema, { embedding: noEmbedding }),
       SchemaVersionError,
     );
   } finally {

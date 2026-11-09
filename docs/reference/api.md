@@ -108,7 +108,7 @@ const index = await openIndex(sql, "docs_index", {
 
 | Option | Required | Notes |
 | --- | --- | --- |
-| `embedding` | yes | Any AI SDK `EmbeddingModel`, or [`noEmbedding`](#noembedding) for a handle that never generates vectors. |
+| `embedding` | yes | An AI SDK embedding model object (for example `openai.embedding("text-embedding-3-small")`), or [`noEmbedding`](#noembedding) for a handle that never generates vectors. A model id string is rejected with `InvalidConfigError`: the AI SDK sends a model id string to its global default provider, which is the Vercel AI Gateway unless the application sets another one. To use the gateway, pass its model object explicitly. |
 | `truncate` | no | A `Truncator`; defaults to `noTruncation`. |
 
 Options are validated before any database access; an invalid or missing option

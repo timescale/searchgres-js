@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Sql } from "postgres";
 import { createIndex } from "../src/create-index.ts";
 import { ensureExtensions } from "../src/db/extensions.ts";
+import { noEmbedding } from "../src/embedding.ts";
 import { ExtensionError } from "../src/errors.ts";
 import { openIndex } from "../src/open-index.ts";
 import {
@@ -52,7 +53,7 @@ test("batch writes work when createIndex installs extension array types on the s
     await ensureExtensions(indexSql);
     await createIndex(indexSql, "docs", { dimensions: 4 });
     const index = await openIndex(indexSql, "docs", {
-      embedding: "mock-embedding",
+      embedding: noEmbedding,
     });
 
     const first = await index.upsertMany([
@@ -128,7 +129,7 @@ test("batch writes work when createIndex installs extension array types on the s
       vectorType: "vector",
     });
     const vectorIndex = await openIndex(indexSql, "docs_vector", {
-      embedding: "mock-embedding",
+      embedding: noEmbedding,
     });
     const vectorResult = await vectorIndex.upsert({
       content: "Full precision vector.",
