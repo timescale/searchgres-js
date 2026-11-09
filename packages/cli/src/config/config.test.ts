@@ -100,6 +100,28 @@ test("dimension limit errors name the method, limit, and value", () => {
     ]);
   }
 });
+test("embedding prefixes default to empty and keep exact whitespace", () => {
+  const defaults = parseRuntimeConfig(minimal).embedding;
+  expect(defaults.documentPrefix).toBe("");
+  expect(defaults.queryPrefix).toBe("");
+  const set = parseRuntimeConfig({
+    ...minimal,
+    embedding: {
+      ...minimal.embedding,
+      documentPrefix: "search_document: ",
+      queryPrefix: "search_query: ",
+    },
+  }).embedding;
+  expect(set.documentPrefix).toBe("search_document: ");
+  expect(set.queryPrefix).toBe("search_query: ");
+  expect(() =>
+    parseRuntimeConfig({
+      ...minimal,
+      embedding: { ...minimal.embedding, queryPrefix: 1 },
+    }),
+  ).toThrow();
+});
+
 test("config writer round trips YAML and JSON5", () => {
   expect(
     parseRuntimeConfig(YAML.parse(renderConfig("config.yaml", minimal))),

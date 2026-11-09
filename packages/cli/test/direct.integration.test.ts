@@ -20,6 +20,7 @@ let path: string;
 let provider: ReturnType<typeof Bun.serve>;
 let fail = false;
 let wrongDimensions = false;
+const received: string[] = [];
 let calls = 0;
 let contentCalls = 0;
 const env = () => ({
@@ -76,6 +77,7 @@ beforeAll(async () => {
       const body = (await request.json()) as { input: string | string[] };
       const texts = typeof body.input === "string" ? [body.input] : body.input;
       contentCalls += texts.length;
+      received.push(...texts);
       if (fail)
         return Response.json(
           {
@@ -603,6 +605,36 @@ test("a wrong-dimension model fails rows permanently and stops the worker", asyn
   await cli(["embeddings", "retry", "--all", "--yes"]);
   await cli(["embeddings", "process"]);
   expect((await cli(["embeddings", "status"])).value.failed.terminal).toBe(0);
+}, 30000);
+
+test("configured document and query prefixes reach the provider", async () => {
+  const prefixed = config();
+  await Bun.write(
+    path,
+    JSON.stringify({
+      ...prefixed,
+      embedding: {
+        ...prefixed.embedding,
+        documentPrefix: "search_document: ",
+        queryPrefix: "search_query: ",
+      },
+    }),
+  );
+  try {
+    await cli(["create", "--content", "prefix probe", "--tree", "prefix"]);
+    received.length = 0;
+    await cli(["embeddings", "process"]);
+    expect(received).toEqual(["search_document: prefix probe"]);
+    received.length = 0;
+    await cli(["search", "--semantic", "probe question", "--tree", "prefix"]);
+    expect(received).toEqual(["search_query: probe question"]);
+    const found = (await cli(["search", "--fulltext", "probe"])).value.results;
+    expect(found.map((r: { content: string }) => r.content)).toContain(
+      "prefix probe",
+    );
+  } finally {
+    await Bun.write(path, JSON.stringify(config()));
+  }
 }, 30000);
 
 test("destroy requires confirmation and operates on the configured index only", async () => {

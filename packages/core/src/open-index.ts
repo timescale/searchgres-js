@@ -158,9 +158,24 @@ export interface OpenIndexOptions {
   /**
    * Applied to record content (by the worker) and to `semantic` query text
    * before embedding. Runtime policy only — not persisted. Defaults to
-   * {@link noTruncation}.
+   * {@link noTruncation}. With a prefix, the truncator gets the prefixed text,
+   * so the prefix counts toward its budget. It must keep the start of the text,
+   * as all built-in truncators do.
    */
   readonly truncate?: Truncator;
+  /**
+   * Literal text put before record content when the worker embeds it, for
+   * models that need a document task prefix (for example `"search_document: "`
+   * for Nomic models). Defaults to `""`. Stored content and full-text search
+   * do not change. Runtime policy only: a change applies only to records
+   * embedded after it, so re-embed existing records after you change it.
+   */
+  readonly documentPrefix?: string;
+  /**
+   * Literal text put before `semantic` query text when search embeds it (for
+   * example `"search_query: "`). Defaults to `""`. Runtime policy only.
+   */
+  readonly queryPrefix?: string;
 }
 
 export class Index implements TransactionIndex {
@@ -171,6 +186,10 @@ export class Index implements TransactionIndex {
   readonly vectorIndex: VectorIndexMethod;
   readonly embedding: IndexEmbeddingModel;
   readonly truncate: Truncator;
+  /** Text put before record content for embedding. See {@link OpenIndexOptions}. */
+  readonly documentPrefix: string;
+  /** Text put before semantic query text for embedding. */
+  readonly queryPrefix: string;
 
   /** @internal Caller-owned pool or transaction used by every method. */
   readonly sql: postgres.ISql;
@@ -184,6 +203,8 @@ export class Index implements TransactionIndex {
     vectorIndex: VectorIndexMethod;
     embedding: IndexEmbeddingModel;
     truncate: Truncator;
+    documentPrefix?: string;
+    queryPrefix?: string;
   }) {
     this.sql = options.sql;
     this.schema = options.schema;
@@ -192,6 +213,8 @@ export class Index implements TransactionIndex {
     this.vectorIndex = options.vectorIndex;
     this.embedding = options.embedding;
     this.truncate = options.truncate;
+    this.documentPrefix = options.documentPrefix ?? "";
+    this.queryPrefix = options.queryPrefix ?? "";
   }
 
   /** Insert one record, replacing a conflict by default. */
@@ -576,6 +599,8 @@ export class Index implements TransactionIndex {
       vectorIndex: this.vectorIndex,
       embedding: this.embedding,
       truncate: this.truncate,
+      documentPrefix: this.documentPrefix,
+      queryPrefix: this.queryPrefix,
     });
   }
 
@@ -665,6 +690,8 @@ const openIndexOptionsSchema = z.strictObject({
       error: "expected a Truncator function",
     })
     .optional(),
+  documentPrefix: z.string().optional(),
+  queryPrefix: z.string().optional(),
 });
 
 function normalizeOpenIndexOptions(input: unknown): OpenIndexOptions {
@@ -736,5 +763,11 @@ async function openIndexHandle(
     vectorIndex: vectorShape.vectorIndex,
     embedding: opts.embedding,
     truncate: opts.truncate ?? noTruncation,
+    ...(opts.documentPrefix === undefined
+      ? {}
+      : { documentPrefix: opts.documentPrefix }),
+    ...(opts.queryPrefix === undefined
+      ? {}
+      : { queryPrefix: opts.queryPrefix }),
   });
 }

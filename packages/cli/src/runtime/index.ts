@@ -155,6 +155,8 @@ export async function openRuntime(
     const index = await openIndex(sql, config.index.schema, {
       embedding,
       truncate: baseTruncate,
+      documentPrefix: config.embedding.documentPrefix,
+      queryPrefix: config.embedding.queryPrefix,
     });
     assertConfiguredIndexShape(index, config.index);
     return {

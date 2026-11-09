@@ -10,11 +10,16 @@ import {
 } from "./db/embedding-queue.ts";
 import {
   assertEmbeddingAvailable,
+  assertPrefixFits,
   boundedError,
   embedTexts,
   resolveBatchSize,
 } from "./embedding.ts";
-import { DimensionMismatchError, RateLimitError } from "./errors.ts";
+import {
+  DimensionMismatchError,
+  InvalidConfigError,
+  RateLimitError,
+} from "./errors.ts";
 import type { Index } from "./open-index.ts";
 import {
   runDetached,
@@ -76,7 +81,7 @@ export interface EmbeddingWorkerOptions extends DrainTuning {
   readonly pruneRetentionMs?: number;
   /**
    * Called when a tick fails. The worker keeps running and backs off, except
-   * after a `DimensionMismatchError`, when it stops (`context.stopped`). This
+   * after a configuration fault, when it stops (`context.stopped`). This
    * is the only channel by which a caller learns that a
    * model is misconfigured, a key was revoked, or the database is unreachable.
    * Without it the worker retries silently (OTel spans still record the
@@ -98,10 +103,11 @@ export interface WorkerErrorContext {
   readonly backoffMs: number;
   /**
    * True when the worker stopped after this error and claims no more work.
-   * This occurs after a `DimensionMismatchError`: the model returns vectors
-   * that the index cannot store, and a retry with the same model cannot
-   * succeed. Open a handle with a correct model, retry the failures, and
-   * start a new worker.
+   * This occurs after a `DimensionMismatchError` (the model returns vectors
+   * that the index cannot store) or an `InvalidConfigError` (the
+   * `documentPrefix` does not fit the truncation budget). A retry with the
+   * same handle cannot succeed. Open a handle with a correct configuration,
+   * retry any failures, and start a new worker.
    */
   readonly stopped: boolean;
 }
@@ -135,6 +141,8 @@ export async function processEmbeddings(
   span: Span,
 ): Promise<ProcessEmbeddingsResult> {
   assertEmbeddingAvailable(index, "process embeddings");
+  // Check before any claim: a prefix that does not fit fails every row.
+  await assertPrefixFits(index, "document");
   const pass = await drainPass(
     index,
     {
@@ -243,6 +251,7 @@ async function runBatch(
     embeddings = await embedTexts(
       index,
       rows.map((row) => row.content),
+      "document",
     );
   } catch (error) {
     // A rate limit is a batch-level fault, not a per-row failure: refund the
@@ -392,6 +401,11 @@ function startEmbeddingWorkerLoop(
     let batchSize: number | undefined;
     while (!signal.aborted) {
       try {
+        if (batchSize === undefined) {
+          // Check before the first claim: a prefix that does not fit fails
+          // every row, and a retry with this handle cannot succeed.
+          await assertPrefixFits(index, "document");
+        }
         const effectiveBatchSize =
           batchSize ?? (await resolveBatchSize(index, options.batchSize));
         batchSize = effectiveBatchSize;
@@ -451,7 +465,10 @@ function startEmbeddingWorkerLoop(
           continue;
         }
         consecutiveErrors++;
-        if (error instanceof DimensionMismatchError) {
+        if (
+          error instanceof DimensionMismatchError ||
+          error instanceof InvalidConfigError
+        ) {
           report(error, {
             phase: "process",
             consecutiveErrors,
