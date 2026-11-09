@@ -608,7 +608,9 @@ test("creates, opens, and reindexes prism and hnsw vector indexes", async () => 
 
 test("reindex timeouts override a shorter session transaction_timeout", async () => {
   const schema = randomTestSchema();
-  const pool = connectToDatabase(sql.options.database, 2);
+  // One connection, so the session setting below and the rebuild's reserved
+  // session are the same session.
+  const pool = connectToDatabase(sql.options.database, 1);
   try {
     await createIndex(sql, schema, { dimensions: 4 });
     for (const concurrently of [false, true]) {
