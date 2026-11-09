@@ -1,6 +1,6 @@
 {
   "name": "searchgres",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Postgres-native hybrid search: semantic + BM25 retrieval with composable hierarchy, metadata, temporal, and regex filtering.",
   "license": "Apache-2.0",
   "type": "module",
