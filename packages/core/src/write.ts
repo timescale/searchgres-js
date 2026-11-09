@@ -19,7 +19,7 @@ const MAX_UPSERT_BATCH_SIZE = 1000;
 
 const recordSchema = z
   .object({
-    id: z.uuidv7().optional(),
+    id: z.uuidv7({ error: "expected a UUIDv7" }).optional(),
     // Empty content can never be embedded (providers reject it), so it would
     // only burn attempts and land in `failed`; reject it at the boundary.
     content: z.string().min(1, "content must not be empty"),

@@ -225,6 +225,30 @@ export async function failEmbedding(
 }
 
 /**
+ * Finalize a claimed row as failed via `<schema>.fail_embedding_permanently`.
+ * The queue does not retry it. `retry_embedding_failures` can reset it.
+ */
+export async function failEmbeddingPermanently(
+  sql: postgres.ISql,
+  schema: string,
+  input: { readonly queueId: string; readonly error: string },
+): Promise<void> {
+  await runSql(
+    sql`
+      select ${sql(schema)}.fail_embedding_permanently
+      ( ${input.queueId}::pg_catalog.int8
+      , ${input.error}
+      )
+    `,
+    {
+      spanName: "failEmbeddingPermanently",
+      dbOperationName: "SELECT",
+      namespace: schema,
+    },
+  );
+}
+
+/**
  * Undo a claim after a rate limit via `<schema>.release_embedding`: refund the
  * attempt and defer visibility by `backoffMs`.
  */

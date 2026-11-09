@@ -304,6 +304,7 @@ type ProcessEmbeddingsResult = {
   failed: number;
   cancelled: number;
   remaining: number;
+  sampleError: Error | null;  // first failure in this pass; may contain provider text
 };
 
 type EmbeddingWorkerOptions = {
@@ -319,6 +320,7 @@ type WorkerErrorContext = {
   phase: "process" | "prune";
   consecutiveErrors: number;  // failed passes in a row; rate limits excluded
   backoffMs: number;          // sleep before the next attempt
+  stopped: boolean;           // true after DimensionMismatchError: no more claims
 };
 
 type EmbeddingWorker = { stop(): Promise<void> };

@@ -19,6 +19,7 @@ let dir: string;
 let path: string;
 let provider: ReturnType<typeof Bun.serve>;
 let fail = false;
+let wrongDimensions = false;
 let calls = 0;
 let contentCalls = 0;
 const env = () => ({
@@ -92,7 +93,11 @@ beforeAll(async () => {
         data: texts.map((text, index) => ({
           object: "embedding",
           index,
-          embedding: text.includes("cat") ? [0, 1, 0, 0] : [1, 0, 0, 0],
+          embedding: wrongDimensions
+            ? [1, 0, 0]
+            : text.includes("cat")
+              ? [0, 1, 0, 0]
+              : [1, 0, 0, 0],
         })),
       });
     },
@@ -482,6 +487,11 @@ test("pass failure is nonzero, reported safely, and queue APIs retry explicit ID
   await cli(["create", "--content", "fail me", "--tree", "errors"]);
   const result = await cli(["embeddings", "process", "--max-batches", "1"], 1);
   expect(result.value.failed).toBeGreaterThan(0);
+  expect(result.value.sampleError).toEqual({
+    code: "EMBEDDING_PROVIDER",
+    message: "Failed to generate embeddings (HTTP 400)",
+  });
+  expect(result.out).not.toContain("secret-bearing-provider-message");
   expect(result.err).not.toContain("secret-bearing-provider-message");
   // Advance attempts/visibility only as a test fixture; the binary uses no queue SQL.
   await sql.unsafe(
@@ -502,6 +512,29 @@ test("pass failure is nonzero, reported safely, and queue APIs retry explicit ID
   await cli(["embeddings", "process"]);
   await cli(["embeddings", "prune", "--older-than", "1d", "--yes"]);
   await cli(["embeddings", "prune", "--older-than", "1d", "--dry-run"], 2);
+}, 30000);
+
+test("a wrong-dimension model fails rows permanently and stops the worker", async () => {
+  wrongDimensions = true;
+  try {
+    await cli(["create", "--content", "wrong dims", "--tree", "dims"]);
+    const processed = await cli(["embeddings", "process"], 1);
+    expect(processed.err).toContain("DIMENSION_MISMATCH");
+    expect(processed.err).toContain("index expects 4, received 3");
+    expect(
+      (await cli(["embeddings", "status"])).value.failed.terminal,
+    ).toBeGreaterThan(0);
+
+    await cli(["embeddings", "retry", "--all", "--yes"]);
+    const worker = await cli(["embeddings", "worker", "--workers", "1"], 1);
+    expect(worker.err).toContain('"workerStopped":true');
+    expect(worker.err).toContain("DIMENSION_MISMATCH");
+  } finally {
+    wrongDimensions = false;
+  }
+  await cli(["embeddings", "retry", "--all", "--yes"]);
+  await cli(["embeddings", "process"]);
+  expect((await cli(["embeddings", "status"])).value.failed.terminal).toBe(0);
 }, 30000);
 
 test("destroy requires confirmation and operates on the configured index only", async () => {

@@ -4,8 +4,12 @@
 import { z } from "zod";
 import { filterNodeError } from "./filter/issues.ts";
 
-export const uuidSchema = z.uuidv7();
-export const timestampSchema = z.iso.datetime({ offset: true });
+export const uuidSchema = z.uuidv7({ error: "expected a UUIDv7" });
+export const timestampSchema = z.iso.datetime({
+  offset: true,
+  error:
+    "expected an ISO 8601 timestamp with a UTC offset or Z, for example 2026-01-02T03:04:05Z",
+});
 export const jsonObjectSchema = z.record(z.string(), z.json());
 const treePathSchema = z
   .string()

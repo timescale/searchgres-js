@@ -52,7 +52,7 @@ const result = await index.processEmbeddings({
 });
 
 result;
-// { claimed, embedded, failed, cancelled, remaining }
+// { claimed, embedded, failed, cancelled, remaining, sampleError }
 ```
 
 With no bounds it drains until no claimable work remains, then returns.
@@ -66,11 +66,23 @@ The result fields:
 - **`cancelled`** — rows dropped because the record changed or was deleted (their
   work was stale).
 - **`remaining`** — rows still pending after the pass.
+- **`sampleError`** — the first error that made rows fail in this pass, or
+  `null`. Use it to see why a pass failed, for example a mistyped model id. A
+  provider failure is an `EmbeddingProviderError` whose `cause` is the AI SDK
+  error. It can contain provider text, so redact it before you show it to
+  untrusted users.
 
-A provider **rate limit** or a **wrong vector dimension** aborts the pass by
-throwing ([`RateLimitError`](../reference/errors.md) or
-[`DimensionMismatchError`](../reference/errors.md)) after releasing the claimed
-rows, so the work is preserved for a retry or a corrected configuration.
+A provider **rate limit** aborts the pass by throwing
+[`RateLimitError`](../reference/errors.md) after it releases the claimed rows
+and refunds their attempts, so the work stays pending for a later retry.
+
+A **wrong vector dimension** aborts the pass by throwing
+[`DimensionMismatchError`](../reference/errors.md). The model returns vectors
+that the index cannot store, and a retry with the same model cannot succeed. So
+the claimed batch fails permanently at once, with no retries: its rows appear in
+`queueStats().failed` and `listEmbeddingFailures()`. The pass claims no more
+rows, and the rest of the queue stays pending. Fix the model or the index, then
+[retry the failures](#inspect-and-retry-terminal-failures).
 
 ## Run a continuous worker
 
@@ -83,10 +95,13 @@ const worker = index.startEmbeddingWorker({
   intervalMs: 1_000,             // poll delay when idle
   batchSize: 50,
   pruneRetentionMs: 604_800_000, // prune terminal rows when idle (7 days)
-  onError(error, { phase, consecutiveErrors, backoffMs }) {
+  onError(error, { phase, consecutiveErrors, backoffMs, stopped }) {
     // Do not send raw provider/driver diagnostics to an unrestricted log.
     const code = error instanceof SearchgresError ? error.code : "INTERNAL";
-    logger.error({ code, phase, consecutiveErrors, backoffMs }, "embedding worker");
+    logger.error(
+      { code, phase, consecutiveErrors, backoffMs, stopped },
+      "embedding worker",
+    );
   },
 });
 
@@ -99,14 +114,21 @@ sleeps `intervalMs` when idle. `stop()` is graceful: it interrupts the idle wait
 lets any in-flight batch finish, and never closes your pool.
 
 **Pass `onError` and monitor the queue.** The callback reports faults that escape
-a drain pass, such as a wrong-dimension model (`DimensionMismatchError`) or a
-database failure. The worker backs off exponentially (up to 60s) and retries
-these failed passes. Idle-prune failures are reported too, but do not fail the
-drain pass. Process termination and fatal failures outside the guarded loop
-still stop the worker.
+a drain pass, such as a database failure or a wrong-dimension model
+(`DimensionMismatchError`). For most of these, the worker backs off
+exponentially (up to 60s) and retries the failed pass. Idle-prune failures are
+reported too, but do not fail the drain pass. Process termination and fatal
+failures outside the guarded loop still stop the worker.
+
+A `DimensionMismatchError` stops the worker. The rows of that batch fail
+permanently (see [Drain on demand](#drain-on-demand)), the callback gets
+`stopped: true`, and the worker claims no more work. A retry with the same model
+cannot succeed. Fix the configuration, retry the failures, and start a new
+worker with a corrected handle. `stop()` still resolves normally.
 
 The callback receives the error plus `phase` (`process` for a drain pass, `prune`
-for idle pruning), `consecutiveErrors`, and the `backoffMs` before the next tick.
+for idle pruning), `consecutiveErrors`, the `backoffMs` before the next tick,
+and `stopped`.
 A `RateLimitError` is reported with the provider's retry delay (or the default
 backoff), and does not count toward `consecutiveErrors`. Call `worker.stop()`
 from inside it if you would rather give up than retry. A throwing callback is
@@ -200,8 +222,9 @@ were resolved or pruned, were already retried, or do not exist. Retrying is
 version-guarded and never resurrects work for old content.
 
 Rate limits normally do not appear here: searchgres.js refunds those attempts and
-leaves the work pending with the provider's backoff. Wrong-dimension output also
-leaves work pending and requires correcting the model/index configuration.
+leaves the work pending with the provider's backoff. Wrong-dimension output
+fails the claimed batch permanently. Retry those rows only after you correct
+the model or index configuration.
 Terminal retry is for ordinary failures whose underlying cause has been fixed;
 do not blindly retry a permanent error.
 

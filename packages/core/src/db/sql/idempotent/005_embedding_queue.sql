@@ -185,6 +185,29 @@ set search_path to pg_catalog, public, pg_temp
 ;
 
 --------------------------------------------------------------------------------
+-- fail_embedding_permanently
+--------------------------------------------------------------------------------
+-- Finalize a claimed row as failed at once. Workers use this for a fault that a
+-- retry with the same model cannot fix, such as a wrong vector dimension.
+create or replace function {{schema_ident}}.fail_embedding_permanently
+( _queue_id bigint
+, _error text
+)
+returns void
+as $func$
+  update {{schema_ident}}.embedding_queue
+  set
+    outcome = 'failed'
+  , last_error = _error
+  , updated_at = now()
+  where id = _queue_id
+  and outcome is null
+  ;
+$func$ language sql volatile security invoker
+set search_path to pg_catalog, public, pg_temp
+;
+
+--------------------------------------------------------------------------------
 -- release_embedding
 --------------------------------------------------------------------------------
 create or replace function {{schema_ident}}.release_embedding

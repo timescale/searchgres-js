@@ -86,6 +86,10 @@ test("rejects an existing schema without mutating it", async () => {
       () => createIndex(sql, schema, { dimensions: 4 }),
       ConflictError,
     );
+    await assert.rejects(
+      () => createIndex(sql, "public", { dimensions: 4 }),
+      /^ConflictError: Schema "public" already exists\. createIndex creates a new schema/,
+    );
     assert.equal(await schemaExists(sql, schema), true);
   } finally {
     await dropTestSchema(sql, schema);

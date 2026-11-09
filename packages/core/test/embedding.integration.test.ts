@@ -6,6 +6,7 @@ import { noEmbedding } from "../src/embedding.ts";
 import type { WorkerErrorContext } from "../src/embedding-worker.ts";
 import {
   DimensionMismatchError,
+  EmbeddingProviderError,
   EmbeddingUnavailableError,
   InvalidInputError,
   RateLimitError,
@@ -200,6 +201,7 @@ test("processEmbeddings embeds queued rows and writes vectors back", async () =>
       failed: 0,
       cancelled: 0,
       remaining: 0,
+      sampleError: null,
     });
 
     assert.equal(await embeddingOf(index.schema, a?.id ?? ""), "[1,0,0,0]");
@@ -219,6 +221,7 @@ test("processEmbeddings is a no-op on an empty queue", async () => {
       failed: 0,
       cancelled: 0,
       remaining: 0,
+      sampleError: null,
     });
   });
 });
@@ -307,19 +310,57 @@ test("a rate limit refunds attempts, defers visibility, and throws", async () =>
   });
 });
 
-test("a wrong-dimension model releases work and throws", async () => {
+test("a wrong-dimension model fails the batch permanently and throws", async () => {
   await withIndex(async (index, model) => {
     model.handler = (values) => values.map(() => [1, 0, 0]); // dim 3 != 4
-    await index.upsertMany([{ content: "wd", tree: "docs" }]);
+    await index.upsertMany([
+      { content: "wd one", tree: "docs" },
+      { content: "wd two", tree: "docs" },
+      { content: "wd three", tree: "docs" },
+    ]);
 
     await assert.rejects(
-      () => index.processEmbeddings(),
+      () => index.processEmbeddings({ batchSize: 2, maxAttempts: 100 }),
       DimensionMismatchError,
     );
 
-    const [row] = await queueRows(index.schema);
-    assert.equal(row?.outcome, null);
-    assert.equal(row?.attempts, 0); // refunded, preserved for a fixed handle
+    // Only the claimed batch fails, at once and with no retry budget left.
+    // The pass stops, so the third row stays pending for a fixed handle.
+    assert.equal(model.batches.length, 1);
+    const rows = await queueRows(index.schema);
+    assert.deepEqual(
+      rows.map((row) => row.outcome),
+      ["failed", "failed", null],
+    );
+    assert.match(rows[0]?.last_error ?? "", /index expects 4, received 3/);
+    const failures = await index.listEmbeddingFailures();
+    assert.equal(failures.length, 2);
+
+    // After the model is fixed, an explicit retry embeds the failed rows.
+    model.handler = (values) => values.map(() => [1, 0, 0, 0]);
+    await index.retryEmbeddingFailures({
+      queueIds: failures.map((f) => f.queueId),
+    });
+    const result = await index.processEmbeddings();
+    assert.equal(result.embedded, 3);
+    assert.equal(result.sampleError, null);
+  });
+});
+
+test("processEmbeddings returns the first failure as sampleError", async () => {
+  await withIndex(async (index, model) => {
+    model.handler = () => {
+      throw new Error("model nomic-typo not found");
+    };
+    await index.upsertMany([{ content: "typo", tree: "docs" }]);
+
+    const result = await index.processEmbeddings({ maxBatches: 1 });
+    assert.equal(result.failed, 1);
+    assert.ok(result.sampleError instanceof EmbeddingProviderError);
+    assert.match(
+      String((result.sampleError.cause as Error | undefined)?.message),
+      /nomic-typo not found/,
+    );
   });
 });
 
@@ -565,7 +606,7 @@ async function waitFor(
 test("startEmbeddingWorker reports repeated failures through onError with growing backoff", async () => {
   await withIndex(async (index, model) => {
     model.handler = () => {
-      throw new Error("db down");
+      throw new Error("provider down");
     };
     await index.upsertMany([{ content: "e", tree: "docs" }]);
     const seen: { error: unknown; context: WorkerErrorContext }[] = [];
@@ -583,22 +624,75 @@ test("startEmbeddingWorker reports repeated failures through onError with growin
       // itself succeeds; nothing reaches onError for that path.
       await waitFor(() => model.batches.length >= 2);
       assert.equal(seen.length, 0);
-
-      // A wrong-dimension model aborts the pass and must surface.
-      model.handler = (values) => values.map(() => [1, 0, 0]);
-      await waitFor(() => seen.length >= 2);
     } finally {
       await worker.stop();
     }
 
+    // A failure that throws from the pass backs off and keeps the worker
+    // running. Here the model's batch limit cannot be read.
+    const failing = await openIndex(sql, index.schema, {
+      embedding: {
+        ...model,
+        get maxEmbeddingsPerCall(): PromiseLike<number> {
+          return Promise.reject(new Error("model metadata unavailable"));
+        },
+      },
+    });
+    const backoffWorker = failing.startEmbeddingWorker({
+      intervalMs: 10,
+      onError: (error, context) => {
+        seen.push({ error, context });
+      },
+    });
+    try {
+      await waitFor(() => seen.length >= 2);
+    } finally {
+      await backoffWorker.stop();
+    }
+
     const [first, second] = seen;
-    assert.ok(first?.error instanceof DimensionMismatchError);
+    assert.ok(first?.error instanceof Error);
+    assert.match(first.error.message, /metadata/);
     assert.equal(first?.context.phase, "process");
     assert.equal(first?.context.consecutiveErrors, 1);
     assert.equal(first?.context.backoffMs, 10);
-    assert.ok(second?.error instanceof DimensionMismatchError);
+    assert.equal(first?.context.stopped, false);
     assert.equal(second?.context.consecutiveErrors, 2);
     assert.equal(second?.context.backoffMs, 20);
+    assert.equal(second?.context.stopped, false);
+  });
+});
+
+test("startEmbeddingWorker stops after a wrong-dimension model", async () => {
+  await withIndex(async (index, model) => {
+    model.handler = (values) => values.map(() => [1, 0, 0]);
+    await index.upsertMany([
+      { content: "wd one", tree: "docs" },
+      { content: "wd two", tree: "docs" },
+    ]);
+    const seen: { error: unknown; context: WorkerErrorContext }[] = [];
+    const worker = index.startEmbeddingWorker({
+      intervalMs: 10,
+      batchSize: 1,
+      onError: (error, context) => {
+        seen.push({ error, context });
+      },
+    });
+    try {
+      await waitFor(() => seen.length >= 1);
+      // Give a running worker time to claim again. A stopped one does not.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      await worker.stop();
+    }
+
+    assert.equal(seen.length, 1);
+    assert.ok(seen[0]?.error instanceof DimensionMismatchError);
+    assert.equal(seen[0]?.context.stopped, true);
+    assert.equal(model.batches.length, 1);
+    const stats = await index.queueStats();
+    assert.equal(stats.failed, 1);
+    assert.equal(stats.pending, 1);
   });
 });
 
