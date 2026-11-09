@@ -103,13 +103,30 @@ const capped = await index.countTree({ tree: "docs" }, { limit: 1000 });
 // capped.capped === true means there are at least 1000; count is a lower bound.
 ```
 
-`listTree` returns each tree node matching an lquery with a descendant count (a
-matching record contributes to every ancestor node):
+`listTree` matches the lquery against each record's own tree path, not against
+the set of tree nodes. For every matching record, it returns the record's path
+and all of its ancestor paths (not the root), each with the number of matching
+records at or under that node:
 
 ```ts
 for (const { tree, count } of await index.listTree("docs.*")) {
   console.log(tree, count);
 }
+```
+
+Records that do not match are not counted anywhere, and records at the root
+(`""`) never appear. For example, if every record under `docs` is two levels
+deep (`docs.api.auth`, `docs.guide.intro`), `listTree("docs.*{1}")` returns
+`[]`: no record path is exactly one level below `docs`.
+
+To browse the children of a node, use `treeView` with `levels: 1`. It returns
+the node itself and its direct children, each with the count of all records at
+or under it:
+
+```ts
+await index.treeView("docs", { levels: 1 });
+// [{ tree: "docs", count: 2 }, { tree: "docs.api", count: 1 },
+//  { tree: "docs.guide", count: 1 }]
 ```
 
 ## Compose in a transaction

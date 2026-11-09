@@ -154,7 +154,7 @@ await index.search({
 | `{ lquery: "docs.*.api" }` | An `ltree` `lquery` pattern. |
 | `{ ltxtquery: "api & v2" }` | An `ltree` label search. |
 | `{ meta: { ... } }` | JSONB containment; must be a non-empty object. |
-| `{ metaPredicate: "$.n >= 3" }` | A PostgreSQL JSONPath predicate (`@@`). |
+| `{ metaPredicate: "$.n >= 3" }` | A PostgreSQL JSONPath predicate (`@@`); must return a boolean. |
 | `{ temporalWithin: [start, end] }` | Record's time range is inside `[start, end)`. |
 | `{ temporalOverlaps: [start, end] }` | Record's time range overlaps `[start, end)`. |
 | `{ temporalBefore: t }` | Record's time is strictly before `t`. |
@@ -173,6 +173,13 @@ Rules:
   indexable filter (`tree`, `lquery`, `ltxtquery`, `meta`, or temporal) on the
   same branch, and it may not appear under `not`. With a `semantic`/`vector` or
   `fulltext` arm present, the arm bounds the scan and `regexp` is unrestricted.
+- **`metaPredicate` must be a boolean predicate.** It is evaluated with the
+  jsonb `@@` operator, which uses only the first result item and returns null
+  when that item is not a boolean. searchgres treats null as no match. A path
+  without a comparison, such as `"$.chapter"`, is valid JSONPath but matches
+  nothing, with no error. Write a comparison such as
+  `'$.chapter == "Appendix"'`, or `"exists($.chapter)"` to test that a key is
+  present.
 
 ## Ranking controls
 

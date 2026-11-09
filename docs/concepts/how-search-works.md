@@ -10,8 +10,8 @@ query arms rather than selected with a separate `mode` field.
 
 | Input | Retrieval path |
 | --- | --- |
-| `semantic` | Embed the query, then run HNSW cosine search |
-| `vector` | Run HNSW cosine search with a precomputed vector |
+| `semantic` | Embed the query, then run cosine search on the vector index |
+| `vector` | Run cosine search on the vector index with a precomputed vector |
 | `fulltext` | Run BM25 keyword search |
 | semantic/vector plus `fulltext` | Run both arms and fuse them with RRF |
 | no ranking arm | List matching records in UUIDv7 order |
@@ -31,9 +31,17 @@ await index.search({
 ```
 
 searchgres.js applies the index handle's truncator, calls its embedding model,
-checks the returned dimensions, and searches the HNSW index with cosine
+checks the returned dimensions, and searches the vector index with cosine
 distance. The public score is cosine similarity: higher is better, with a
 possible range of `[-1, 1]`.
+
+The vector index is a pgvector HNSW index by default. An index can instead use
+the experimental `prism` access method from `pg_vectorsearch`. The two behave
+differently under filters: with HNSW, searchgres.js uses strict-order iterative
+scanning, so the scan continues when a filter discards rows. `prism` collects a
+fixed number of candidates first and filters them afterwards, so a filtered
+`prism` semantic search can return fewer rows than `limit`, or none. See
+[Vector index access method](../guides/indexes.md#vector-index-access-method-hnsw-vs-prism).
 
 Pass `vector` instead of `semantic` when your application already computed the
 query embedding. The two fields are mutually exclusive.
