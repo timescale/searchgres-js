@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   made rows fail in the pass, or `null`. Before, a pass that failed (for example
   with a mistyped model id) returned only counts. The CLI prints only its safe
   error class (for example `HTTP 404`).
+- `reindexVectorIndex({ statementTimeoutMs })` now also applies the value to
+  `transaction_timeout`, and sets the timeouts before the rebuild's transaction
+  starts. Before, a session `transaction_timeout` shorter than the rebuild (the
+  CLI default is 35s) ended the session in the middle of a rebuild, whatever
+  `statementTimeoutMs` or `--statement-timeout` said.
 - Clearer validation and error messages: a UUID that is not a UUIDv7 now says
   `expected a UUIDv7`, and a timestamp without an offset says it needs a UTC
   offset or `Z`. An invalid schema name now carries `issues`. `createIndex()`
