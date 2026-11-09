@@ -14,6 +14,7 @@ import {
   flagsFromOptions,
   kebabCase,
   nonnegativeInteger,
+  nonnegativeNumber,
   optionalFlag,
   parseJsonObject,
   positiveInteger,
@@ -35,8 +36,10 @@ import {
 } from "./inputs.ts";
 import {
   parseSelectFields,
+  parseSelection,
   presentRecord,
   projectSearchEnvelope,
+  projectStoredRecord,
 } from "./presentation/index.ts";
 import { installShutdown, openRuntime } from "./runtime/index.ts";
 import { InputError } from "./runtime/report.ts";
@@ -175,6 +178,7 @@ export const searchOptionFlags: Readonly<Record<string, string>> = {
   semanticThreshold: "--semantic-threshold",
   semanticWeight: "--semantic-weight",
   fulltextWeight: "--fulltext-weight",
+  k: "--k",
   order: "--order",
   after: "--after",
   before: "--before",
@@ -302,22 +306,30 @@ async function runGet(
   flags: Flags,
   args: readonly string[],
 ): Promise<void> {
-  if (args.length === 1)
-    return output(
-      { record: presentRecord(await client.get(args[0] as string)) },
-      flags,
-    );
-  if (args.length === 2) {
-    return output(
-      {
-        record: presentRecord(
-          await client.getByName(args[0] as string, args[1] as string),
-        ),
-      },
-      flags,
-    );
+  const rawSelect = optionalFlag(flags, "select");
+  let select: ReturnType<typeof parseSelection> | undefined;
+  if (rawSelect !== undefined) {
+    try {
+      select = parseSelection(rawSelect, { kind: "stored-record" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new InputError(`Invalid --select: ${message}`);
+    }
   }
-  throw new InputError("get requires <id> or <tree> <name>");
+  let record: Awaited<ReturnType<Index["get"]>>;
+  if (args.length === 1) record = await client.get(args[0] as string);
+  else if (args.length === 2)
+    record = await client.getByName(args[0] as string, args[1] as string);
+  else throw new InputError("get requires <id> or <tree> <name>");
+  return output(
+    {
+      record:
+        select === undefined
+          ? presentRecord(record)
+          : projectStoredRecord(record, select),
+    },
+    flags,
+  );
 }
 
 async function runUpdate(
@@ -325,9 +337,8 @@ async function runUpdate(
   flags: Flags,
   args: readonly string[],
 ): Promise<void> {
-  const id = args[0];
-  if (id === undefined || args.length !== 1)
-    throw new InputError("update requires <id>");
+  if (args.length !== 1 && args.length !== 2)
+    throw new InputError("update requires <id> or <tree> <name>");
   const inputFormat = optionalFlag(flags, "input-format");
   if (
     inputFormat !== undefined &&
@@ -364,15 +375,17 @@ async function runUpdate(
           return [name, value];
         }),
     );
+  const versionHash = requiredFlag(flags, "version-hash");
+  const parsedPatch = patchInputSchema.parse(patch);
+  // A tree and name resolve to the record's id first. The version hash still
+  // guards the patch, so a record that changed after the lookup is stale.
+  const id =
+    args.length === 1
+      ? (args[0] as string)
+      : (await client.getByName(args[0] as string, args[1] as string)).id;
   return output(
     {
-      record: presentRecord(
-        await client.patch(
-          id,
-          requiredFlag(flags, "version-hash"),
-          patchInputSchema.parse(patch),
-        ),
-      ),
+      record: presentRecord(await client.patch(id, versionHash, parsedPatch)),
     },
     flags,
   );
@@ -598,18 +611,18 @@ function searchParamsFromFlags(
 ): Record<string, unknown> {
   const semantic = optionalFlag(flags, "semantic");
   const fulltext = optionalFlag(flags, "fulltext");
-  const leaves = filterLeavesFromFlags(flags);
-  if (expression !== undefined && leaves.length > 0) {
-    throw new InputError(
-      "--filter and --filter-file cannot be combined with flat filter flags",
-    );
-  }
+  // A filter expression and the flat filter flags combine with AND.
+  const leaves: readonly Record<string, unknown>[] = [
+    ...(expression === undefined
+      ? []
+      : [expression as Record<string, unknown>]),
+    ...filterLeavesFromFlags(flags),
+  ];
   if (
     requireCriterion &&
     semantic === undefined &&
     fulltext === undefined &&
-    leaves.length === 0 &&
-    expression === undefined
+    leaves.length === 0
   ) {
     throw new InputError(
       "search requires a ranking flag (--semantic, --fulltext) or a filter flag",
@@ -618,11 +631,7 @@ function searchParamsFromFlags(
   return {
     ...(semantic === undefined ? {} : { semantic }),
     ...(fulltext === undefined ? {} : { fulltext }),
-    ...(expression !== undefined
-      ? { filter: expression }
-      : leaves.length === 0
-        ? {}
-        : { filter: conjoin(leaves) }),
+    ...(leaves.length === 0 ? {} : { filter: conjoin(leaves) }),
     ...numericSearchOptions(flags),
     ...(optionalFlag(flags, "order") === undefined
       ? {}
@@ -722,5 +731,7 @@ function numericSearchOptions(flags: Flags): Record<string, number> {
     const raw = optionalFlag(flags, name);
     if (raw !== undefined) options[camelCase(name)] = unitInterval(raw, name);
   }
+  const k = optionalFlag(flags, "k");
+  if (k !== undefined) options.k = nonnegativeNumber(k, "k");
   return options;
 }

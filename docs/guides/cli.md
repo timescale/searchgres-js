@@ -152,16 +152,23 @@ truncation, and queue status without credentials or endpoint URLs.
 ```sh
 searchgres create --content 'Database indexes speed up queries' --tree docs.db --name intro
 searchgres get docs.db intro
+searchgres get docs.db intro --select id,versionHash,content:200
 searchgres search --fulltext database
 searchgres search --semantic 'speed up queries'
 searchgres search --semantic 'speed up queries' --fulltext database
+searchgres search --semantic 'speed up queries' --fulltext database --k 40
 searchgres search --filter '(and (tree docs) (meta {"kind":"guide"}))' --select id,content:200
+searchgres search --filter '(meta {"kind":"guide"})' --tree docs
 searchgres update <id> --version-hash <current-hash> --meta '{"kind":"guide"}'
+searchgres update docs.db intro --version-hash <current-hash> --content 'New text'
 searchgres delete <id>
 ```
 
-Create fails on conflict unless `--replace` or `--ignore` is explicit. Update
-requires a current version hash; `--meta` replaces all existing metadata (it
+Create fails on conflict unless `--replace` or `--ignore` is explicit. `get`
+and `update` address a record by `<id>` or by `<tree> <name>`. Update
+requires a current version hash (`get ... --select versionHash` shows it); an
+update by tree and name looks up the record first, and the version hash still
+rejects a record that changed since you read it. `--meta` replaces all existing metadata (it
 is not merged). `delete <id>` prints `{deleted: {id}}` and
 `delete <tree> <name>` prints `{deleted: {tree, name}}`; a missing record is
 `NOT_FOUND` (exit `2`). Pass
@@ -175,9 +182,15 @@ Tree commands: `tree [root]`, `list --lquery ...`, `count --tree ...` (or
 support `--dry-run`.
 
 YAML is the default display; use `--json`, or `--ndjson` for collection commands.
-Dates are ISO strings. `--select` is local presentation, not database projection.
+Dates are ISO strings. `--select` (on `search` and `get`) is local
+presentation, not database projection. `get --select` accepts the same fields
+as `search --select` except `score`.
 Selected fields are printed in the order given (`contentLength` follows
 `content` for a content range).
+Filter flags (`--tree`, `--meta`, `--lquery`, and the others) combine with AND.
+`--filter` or `--filter-file` can be used together with them, and the
+expression is ANDed with the flags too. `--k` sets the RRF rank constant of a
+hybrid search, like MCP `k`.
 Use `<command> --help` for all flags. See the [filter grammar](../reference/filter-syntax.html).
 
 ### Import/export

@@ -32,13 +32,19 @@ test("Commander parse errors use the JSON error envelope and exit 2", async () =
     })}\n`,
   );
 
-  const conflict = await run(["search", "--filter", "(tree a)", "--tree", "a"]);
+  const conflict = await run([
+    "search",
+    "--filter",
+    "(tree a)",
+    "--filter-file",
+    "f.txt",
+  ]);
   expect(conflict.code).toBe(2);
   expect(JSON.parse(conflict.err)).toEqual({
     error: {
       code: "INVALID_INPUT",
       message:
-        "option '--filter <expression>' cannot be used with option '--tree <path>'",
+        "option '--filter <expression>' cannot be used with option '--filter-file <path>'",
     },
   });
 });
