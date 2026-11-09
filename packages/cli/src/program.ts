@@ -200,14 +200,18 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
     program
       .command("get")
       .description("get one record by id or by tree and name")
-      .argument("<reference...>", "<id> or <tree> <name>"),
+      .argument("<reference...>", "<id> or <tree> <name>")
+      .option(
+        "--select <fields>",
+        "comma-separated output fields, e.g. id,content:200,meta.kind",
+      ),
     "get",
   );
 
   const update = program
     .command("update")
-    .description("update one record optimistically")
-    .argument("<id>", "record UUIDv7")
+    .description("update one record optimistically, by id or by tree and name")
+    .argument("<reference...>", "<id> or <tree> <name>")
     .requiredOption("--version-hash <hash>", "current record version hash")
     .option("--content <text>", "new content")
     .option("--tree <path>", "new raw dotted tree path")
@@ -242,6 +246,7 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
     .option("--semantic-threshold <n>", "minimum cosine similarity in [0,1]")
     .option("--semantic-weight <n>", "semantic RRF weight in [0,1]")
     .option("--fulltext-weight <n>", "full-text RRF weight in [0,1]")
+    .option("--k <n>", "hybrid RRF rank constant (non-negative)")
     .option(
       "--select <fields>",
       "comma-separated output fields, e.g. id,content:200,score",
@@ -346,20 +351,22 @@ function addFilterOptions(command: Command): void {
       "case-insensitive POSIX content regex; needs another filter",
     );
 
-  const leafAttributes = filterFlagNames.map(optionAttribute);
   command
     .addOption(
-      new Option("--filter <expression>", "explicit S-expression filter DSL")
+      new Option(
+        "--filter <expression>",
+        "S-expression filter DSL; ANDed with any filter flags",
+      )
         .argParser(singleOptionValue("--filter"))
-        .conflicts(["filterFile", ...leafAttributes]),
+        .conflicts(["filterFile"]),
     )
     .addOption(
       new Option(
         "--filter-file <path>",
-        "read filter DSL from a UTF-8 file; - reads stdin",
+        "read filter DSL from a UTF-8 file (- reads stdin); ANDed with any filter flags",
       )
         .argParser(singleOptionValue("--filter-file"))
-        .conflicts(["filter", ...leafAttributes]),
+        .conflicts(["filter"]),
     );
 
   // Keep this assertion adjacent to registration: adding a leaf in cli.ts

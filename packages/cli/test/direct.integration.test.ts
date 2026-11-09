@@ -607,6 +607,124 @@ test("a wrong-dimension model fails rows permanently and stops the worker", asyn
   expect((await cli(["embeddings", "status"])).value.failed.terminal).toBe(0);
 }, 30000);
 
+test("CLI parity with MCP: get --select, search --k, update by name, --filter with flags", async () => {
+  const created = (
+    await cli([
+      "create",
+      "--content",
+      "parity record about widgets",
+      "--tree",
+      "parity.a",
+      "--name",
+      "one",
+      "--meta",
+      '{"kind":"guide","team":"core"}',
+    ])
+  ).value.record;
+  await cli([
+    "create",
+    "--content",
+    "parity other widgets",
+    "--tree",
+    "parity.b",
+    "--name",
+    "two",
+    "--meta",
+    '{"kind":"guide"}',
+  ]);
+
+  // get --select projects fields in the requested order.
+  const selected = (
+    await cli(["get", "parity.a", "one", "--select", "meta.kind,id,content:6"])
+  ).value.record;
+  expect(Object.keys(selected)).toEqual([
+    "meta",
+    "id",
+    "content",
+    "contentLength",
+  ]);
+  expect(selected).toEqual({
+    meta: { kind: "guide" },
+    id: created.id,
+    content: "parity",
+    contentLength: "parity record about widgets".length,
+  });
+  await cli(["get", created.id, "--select", "score"], 2);
+
+  // search --k reaches core: hybrid accepts it, and a single arm rejects it
+  // with the flag name.
+  await cli([
+    "search",
+    "--semantic",
+    "widgets",
+    "--fulltext",
+    "widgets",
+    "--k",
+    "10",
+  ]);
+  const singleArm = await cli(
+    ["search", "--fulltext", "widgets", "--k", "10"],
+    2,
+  );
+  expect(singleArm.err).toContain("--k");
+
+  // update <tree> <name> resolves the record and keeps the version check.
+  const updated = (
+    await cli([
+      "update",
+      "parity.a",
+      "one",
+      "--version-hash",
+      created.versionHash,
+      "--content",
+      "parity record about gadgets",
+    ])
+  ).value.record;
+  expect(updated.id).toBe(created.id);
+  expect(updated.content).toBe("parity record about gadgets");
+  const stale = await cli(
+    [
+      "update",
+      "parity.a",
+      "one",
+      "--version-hash",
+      created.versionHash,
+      "--content",
+      "x",
+    ],
+    2,
+  );
+  expect(stale.err).toContain("STALE_VERSION");
+  await cli(
+    ["update", "parity.a", "missing", "--version-hash", "h", "--content", "x"],
+    2,
+  );
+
+  // --filter and the filter flags combine with AND.
+  const both = (
+    await cli([
+      "search",
+      "--filter",
+      '(meta {"kind":"guide"})',
+      "--tree",
+      "parity.a",
+    ])
+  ).value.results;
+  expect(both.map((r: { name: string }) => r.name)).toEqual(["one"]);
+  const neither = (
+    await cli([
+      "search",
+      "--filter",
+      '(meta {"team":"core"})',
+      "--tree",
+      "parity.b",
+    ])
+  ).value.results;
+  expect(neither).toEqual([]);
+  // Leave no pending embedding work for later tests.
+  await cli(["embeddings", "process"]);
+}, 30000);
+
 test("configured document and query prefixes reach the provider", async () => {
   const prefixed = config();
   await Bun.write(

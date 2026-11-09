@@ -63,6 +63,13 @@ export function unitInterval(value: string, name: string): number {
   return number;
 }
 
+export function nonnegativeNumber(value: string, name: string): number {
+  const number = Number(value);
+  if (value.trim() === "" || !Number.isFinite(number) || number < 0)
+    throw new InputError(`--${name} must be a non-negative number`);
+  return number;
+}
+
 export function enumeration<T extends string>(
   value: string,
   name: string,

@@ -94,6 +94,22 @@ test("several filter flags are ANDed; a single leaf is not wrapped", () => {
   });
 });
 
+test("--k maps to the RRF constant and must be a non-negative number", () => {
+  expect(
+    search(["semantic", "cats"], ["fulltext", "cat"], ["k", "40"]),
+  ).toEqual({ semantic: "cats", fulltext: "cat", k: 40 });
+  expect(search(["semantic", "a"], ["fulltext", "b"], ["k", "0"])).toEqual({
+    semantic: "a",
+    fulltext: "b",
+    k: 0,
+  });
+  for (const bad of ["-1", "", "abc", "Infinity"]) {
+    expect(() =>
+      search(["semantic", "a"], ["fulltext", "b"], ["k", bad]),
+    ).toThrow("--k must be a non-negative number");
+  }
+});
+
 test("ranking arms and filters combine, and knobs are typed", () => {
   expect(search(["semantic", "cats"], ["fulltext", "cat"])).toEqual({
     semantic: "cats",
@@ -249,7 +265,7 @@ test("search validation errors name flags, not library fields", () => {
       path: ["--before"],
       message: "provide either `--after` or `--before`, not both",
     },
-    { code: "custom", path: ["k"], message: "k only applies to hybrid" },
+    { code: "custom", path: ["--k"], message: "--k only applies to hybrid" },
     {
       code: "custom",
       path: ["filter", "and", 0],
@@ -280,8 +296,8 @@ function camelCase(flag: string): string {
 }
 
 test("every search parameter with a flag has a flag-name mapping", () => {
-  // `filter` comes from several flags, and `k` has no flag yet.
-  const withoutFlag = new Set(["filter", "k"]);
+  // `filter` comes from several flags.
+  const withoutFlag = new Set(["filter"]);
   expect(
     Object.keys(searchParamsSchema.shape)
       .filter((key) => !withoutFlag.has(key))

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CLI parity with MCP: `get --select`, `search --k` (the hybrid RRF rank
+  constant), and `update <tree> <name>` in addition to `update <id>`.
+  `--filter` and `--filter-file` can now be combined with the filter flags
+  (`--tree`, `--meta`, ...); all of them are ANDed. Before, the combination
+  was rejected.
 - Add optional `documentPrefix` and `queryPrefix` to `openIndex()` (and
   `embedding.documentPrefix` / `embedding.queryPrefix` in CLI config) for
   models that need task prefixes, such as Nomic's `search_document: ` and
