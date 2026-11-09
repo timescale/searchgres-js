@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JSON5, YAML } from "bun";
+import { InvalidConfigError } from "searchgres";
 import { flagsFromOptions } from "../flags.ts";
 import { loadConfiguredCommand, parseRuntimeConfig } from "./config.ts";
 import { renderConfig } from "./config-file.ts";
@@ -71,6 +72,33 @@ test("strict configuration rejects removed and conflicting options", () => {
     },
   ])
     expect(() => parseRuntimeConfig(value)).toThrow();
+});
+test("dimension limit errors name the method, limit, and value", () => {
+  for (const [index, message] of [
+    [
+      { ...minimal.index, vectorIndex: "prism", dimensions: 2048 },
+      "dimensions 2048 exceed the prism limit of 1968",
+    ],
+    [
+      { ...minimal.index, vectorType: "vector", dimensions: 2001 },
+      "dimensions 2001 exceed the hnsw vector limit of 2000",
+    ],
+    [
+      { ...minimal.index, dimensions: 4001 },
+      "dimensions 4001 exceed the hnsw halfvec limit of 4000",
+    ],
+  ] as const) {
+    let thrown: unknown;
+    try {
+      parseRuntimeConfig({ ...minimal, index });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(InvalidConfigError);
+    expect((thrown as InvalidConfigError).issues).toEqual([
+      { code: "custom", message, path: ["index", "dimensions"] },
+    ]);
+  }
 });
 test("config writer round trips YAML and JSON5", () => {
   expect(

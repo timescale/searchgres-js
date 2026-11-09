@@ -65,16 +65,23 @@ export const runtimeConfigSchema = z.strictObject({
       // "prism" (pg_vectorsearch) is experimental until pg_vectorsearch is GA.
       vectorIndex: z.enum(["hnsw", "prism"]).prefault("hnsw"),
     })
-    .refine(
-      (i) =>
-        i.dimensions <=
-        (i.vectorIndex === "prism"
+    .superRefine((i, ctx) => {
+      const limit =
+        i.vectorIndex === "prism"
           ? 1968
           : i.vectorType === "vector"
             ? 2000
-            : 4000),
-      "dimensions exceed vector index storage limit",
-    ),
+            : 4000;
+      if (i.dimensions <= limit) return;
+      // The prism limit is the same for both vector types.
+      const method =
+        i.vectorIndex === "prism" ? "prism" : `hnsw ${i.vectorType}`;
+      ctx.addIssue({
+        code: "custom",
+        path: ["dimensions"],
+        message: `dimensions ${i.dimensions} exceed the ${method} limit of ${limit}`,
+      });
+    }),
   embedding: z
     .strictObject({
       provider: z.literal("openai-compatible"),

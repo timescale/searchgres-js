@@ -23,6 +23,39 @@ import { z } from "zod";
 
 export class InputError extends Error {}
 
+const commanderDisplayCodes = new Set([
+  "commander.help",
+  "commander.helpDisplayed",
+  "commander.version",
+]);
+
+/**
+ * Convert a Commander parse failure to an InputError. Return undefined for
+ * help and version exits: Commander already wrote their output.
+ */
+export function commanderInputError(error: {
+  readonly code: string;
+  readonly message: string;
+}): InputError | undefined {
+  if (commanderDisplayCodes.has(error.code)) return undefined;
+  return new InputError(error.message.replace(/^error: /, ""));
+}
+
+/**
+ * Format the final error report for stderr. A terminal gets readable text.
+ * Other destinations get one JSON line, so scripts can parse it.
+ */
+export function formatError(error: unknown, terminal: boolean): string {
+  const safe = safeError(error);
+  if (!terminal) return JSON.stringify({ error: safe });
+  const lines = [`error [${safe.code}]: ${safe.message}`];
+  for (const issue of safe.issues ?? []) {
+    const path = issue.path.join(".");
+    lines.push(`  - ${path === "" ? "" : `${path}: `}${issue.message}`);
+  }
+  return lines.join("\n");
+}
+
 /**
  * Reduce any failure to a stable code and a message safe to print or return
  * to an MCP host.

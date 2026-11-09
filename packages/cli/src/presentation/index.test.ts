@@ -29,26 +29,32 @@ const result: SearchResult = {
 const select = (value: string | readonly string[]) =>
   parseSelection(value, { kind: "search-result" });
 
-test("projects every field in canonical order", () => {
+test("projects every field in the selected order", () => {
+  const order = [
+    "versionHash",
+    "score",
+    "id",
+    "content",
+    "meta",
+    "tree",
+    "name",
+    "temporal",
+    "hasEmbedding",
+    "createdAt",
+    "updatedAt",
+    "version",
+  ];
+  const projected = projectSearchResult(result, select(order));
+  assert.deepEqual(projected, result);
+  assert.deepEqual(Object.keys(projected), order);
   assert.deepEqual(
-    projectSearchResult(
-      result,
-      select([
-        "versionHash",
-        "score",
-        "id",
-        "content",
-        "meta",
-        "tree",
-        "name",
-        "temporal",
-        "hasEmbedding",
-        "createdAt",
-        "updatedAt",
-        "version",
-      ]),
+    Object.keys(
+      projectSearchResult(
+        result,
+        select("score,tree,name,content:3,meta.source"),
+      ),
     ),
-    result,
+    ["score", "tree", "name", "content", "contentLength", "meta"],
   );
 });
 

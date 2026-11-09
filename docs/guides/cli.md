@@ -134,7 +134,10 @@ searchgres delete <id>
 ```
 
 Create fails on conflict unless `--replace` or `--ignore` is explicit. Update
-requires a current version hash; metadata is replaced, not merged. Pass
+requires a current version hash; `--meta` replaces all existing metadata (it
+is not merged). `delete <id>` prints `{deleted: {id}}` and
+`delete <tree> <name>` prints `{deleted: {tree, name}}`; a missing record is
+`NOT_FOUND` (exit `2`). Pass
 structured input to create with `--file`; update uses `--input` (inline, `@file`,
 or `-`). No command accepts caller vectors. Semantic query text is embedded on
 the host before querying PostgreSQL.
@@ -146,6 +149,8 @@ support `--dry-run`.
 
 YAML is the default display; use `--json`, or `--ndjson` for collection commands.
 Dates are ISO strings. `--select` is local presentation, not database projection.
+Selected fields are printed in the order given (`contentLength` follows
+`content` for a content range).
 Use `<command> --help` for all flags. See the [filter grammar](../reference/filter-syntax.html).
 
 ### Import/export
@@ -274,6 +279,29 @@ Exit codes: `0` success; `2` when the request cannot succeed as written
 (usage and input errors, plus deterministic record-state mismatches:
 `NOT_FOUND`, `CONFLICT`, `STALE_VERSION`); `1` operational failures (database,
 provider, configuration). Structured errors on stderr carry a stable code.
+
+When stderr is not a terminal, every failure (including argument errors such
+as an unknown option) is one JSON line:
+
+```json
+{"error":{"code":"INVALID_INPUT","message":"unknown option '--limt'\n(Did you mean --limit?)"}}
+```
+
+Validation failures can add `issues`, an array of `{code, path, message}`.
+When stderr is a terminal, the same error is printed as text, with the
+message's line breaks kept (for example, a filter error's caret diagram) and
+one line for each issue:
+
+```text
+error [INVALID_INPUT]: Invalid filter expression: --filter:1:20: expected `)` to close `tree`
+(tree ignition.docs
+                   ^
+```
+
+The exit codes are the same in both forms. `--help` and `--version` print to
+stdout and exit `0`. Search validation messages and issue paths name the flag
+(`--candidate-limit`), not the library option (`candidateLimit`); MCP tools
+keep the library names.
 Validation, record-state, index, extension, dimension, and timeout messages are
 retained because they describe only the caller's own request or catalog facts.
 Provider and driver messages are replaced by their code so remote text and

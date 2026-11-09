@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { JSON5 } from "bun";
+import { JSON5, YAML } from "bun";
 import postgres from "postgres";
 import { parseRuntimeConfig } from "../src/config/config.ts";
 import { openRuntime } from "../src/runtime/index.ts";
@@ -277,6 +277,67 @@ test("direct CRUD, filters, trees, import/export, projection and temporal round 
   ).value;
   expect(found.results[0].id).toBe(id);
   expect(found.results[0].content).toBe("Postgres");
+  // Output fields follow the --select order in every display format.
+  const ordered = await cli([
+    "search",
+    "--tree",
+    "docs",
+    "--select",
+    "score,tree,name,content:8,id",
+  ]);
+  expect(Object.keys(ordered.value.results[0])).toEqual([
+    "score",
+    "tree",
+    "name",
+    "content",
+    "contentLength",
+    "id",
+  ]);
+  const yamlChild = Bun.spawn(
+    [
+      binary,
+      "--config",
+      path,
+      "--no-env-file",
+      "search",
+      "--tree",
+      "docs",
+      "--select",
+      "score,tree,name,content:8",
+    ],
+    { env: env(), stdout: "pipe", stderr: "pipe" },
+  );
+  const yamlOut = await new Response(yamlChild.stdout).text();
+  expect(await yamlChild.exited).toBe(0);
+  const yamlValue = YAML.parse(yamlOut) as { results: object[] };
+  expect(Object.keys(yamlValue.results[0] ?? {})).toEqual([
+    "score",
+    "tree",
+    "name",
+    "content",
+    "contentLength",
+  ]);
+  // Search validation errors name CLI flags, not library fields.
+  const notHybrid = await cli(
+    ["search", "--fulltext", "Postgres", "--candidate-limit", "5"],
+    2,
+  );
+  expect(JSON.parse(notHybrid.err).error).toMatchObject({
+    code: "INVALID_INPUT",
+    message: expect.stringContaining(
+      "--candidate-limit only applies to a hybrid search",
+    ),
+    issues: [expect.objectContaining({ path: ["--candidate-limit"] })],
+  });
+  expect(notHybrid.err).not.toContain("candidateLimit");
+  // A missing `)` is reported at the end of the expression.
+  const unclosed = await cli(
+    ["search", "--fulltext", "timeout", "--filter", "(tree ignition.docs"],
+    2,
+  );
+  expect(JSON.parse(unclosed.err).error.message).toBe(
+    "Invalid filter expression: --filter:1:20: expected `)` to close `tree`\n(tree ignition.docs\n                   ^",
+  );
   expect((await cli(["count", "--tree", "docs"])).value.count).toBe(1);
   expect((await cli(["tree", "docs"])).value.entries.length).toBeGreaterThan(0);
   expect(
@@ -305,7 +366,14 @@ test("direct CRUD, filters, trees, import/export, projection and temporal round 
   expect(JSON.parse((await Bun.file(exported).text()).trim()).temporal).toEqual(
     ["2026-01-01T00:00:00.000Z"],
   );
-  await cli(["delete", id]);
+  expect((await cli(["delete", id])).value).toEqual({ deleted: { id } });
+  const missingDelete = await cli(["delete", id], 2);
+  expect(JSON.parse(missingDelete.err).error.code).toBe("NOT_FOUND");
+  expect((await cli(["import", exported])).value.inserted).toBe(1);
+  expect((await cli(["delete", "docs.db", "intro"])).value).toEqual({
+    deleted: { tree: "docs.db", name: "intro" },
+  });
+  await cli(["delete", "docs.db", "intro"], 2);
   expect((await cli(["import", exported])).value.inserted).toBe(1);
   expect(calls).toBe(0);
 }, 30000);

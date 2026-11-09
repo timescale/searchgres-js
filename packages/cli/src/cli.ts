@@ -1,4 +1,9 @@
-import type { Index, TreeCountSelector } from "searchgres";
+import {
+  type Index,
+  InvalidInputError,
+  type TreeCountSelector,
+} from "searchgres";
+import { z } from "zod";
 import { exportRecords, importRecords } from "./bulk.ts";
 import { duration, loadConfiguredCommand } from "./config/config.ts";
 import { filterExpressionFromFlags } from "./filter-input.ts";
@@ -146,17 +151,76 @@ async function runSearch(client: Index, flags: Flags): Promise<void> {
     }
   }
 
-  const result = {
-    results: await client.search(
-      searchParamsSchema.parse(await resolvedSearchParams(flags, true)),
-    ),
-  };
+  const params = await resolvedSearchParams(flags, true);
+  let result: { results: Awaited<ReturnType<Index["search"]>> };
+  try {
+    result = { results: await client.search(searchParamsSchema.parse(params)) };
+  } catch (error) {
+    throw withSearchFlagNames(error);
+  }
   output(
     select === undefined
       ? { results: result.results.map(presentRecord) }
       : projectSearchEnvelope(result, select),
     flags,
   );
+}
+
+/** Core search option names that have a `search` flag. */
+const searchOptionFlags: Readonly<Record<string, string>> = {
+  semantic: "--semantic",
+  fulltext: "--fulltext",
+  limit: "--limit",
+  candidateLimit: "--candidate-limit",
+  semanticThreshold: "--semantic-threshold",
+  semanticWeight: "--semantic-weight",
+  fulltextWeight: "--fulltext-weight",
+  order: "--order",
+  after: "--after",
+  before: "--before",
+};
+
+/**
+ * Replace search option names with their flag names in validation messages
+ * and issue paths. Core and MCP keep the library names. Return other errors
+ * unchanged.
+ */
+export function withSearchFlagNames(error: unknown): unknown {
+  if (error instanceof z.ZodError) {
+    return new z.ZodError(
+      error.issues.map((issue) => ({ ...issue, path: flagPath(issue.path) })),
+    );
+  }
+  if (!(error instanceof InvalidInputError)) return error;
+  return new InvalidInputError(flagText(error.message), {
+    cause: error,
+    issues: error.issues.map((issue) => ({
+      code: issue.code,
+      message: flagText(issue.message),
+      path: flagPath(issue.path),
+    })),
+  });
+}
+
+function flagPath<T extends PropertyKey>(path: readonly T[]): T[] {
+  const [first, ...rest] = path;
+  const flag =
+    typeof first === "string" && Object.hasOwn(searchOptionFlags, first)
+      ? searchOptionFlags[first]
+      : undefined;
+  return flag === undefined ? [...path] : [flag as T, ...rest];
+}
+
+function flagText(text: string): string {
+  let result = text;
+  for (const [key, flag] of Object.entries(searchOptionFlags)) {
+    // Replace a name in backticks, or a name that starts the text or follows
+    // a "path: " prefix. Do not replace plain words such as "semantic".
+    result = result
+      .replaceAll(`\`${key}\``, `\`${flag}\``)
+      .replace(new RegExp(`(^|: )${key}\\b`, "g"), `$1${flag}`);
+  }
+  return result;
 }
 
 function assertOutputFormatApplies(command: string, flags: Flags): void {
@@ -335,12 +399,14 @@ async function runDelete(
     throw new InputError("--dry-run and --yes apply only to --tree deletion");
   }
   if (args.length === 1) {
-    await client.delete(args[0] as string);
-    return output({}, flags);
+    const id = args[0] as string;
+    await client.delete(id);
+    return output({ deleted: { id } }, flags);
   }
   if (args.length === 2) {
-    await client.deleteByName(args[0] as string, args[1] as string);
-    return output({}, flags);
+    const [tree, name] = args as [string, string];
+    await client.deleteByName(tree, name);
+    return output({ deleted: { tree, name } }, flags);
   }
   throw new InputError("delete requires <id>, <tree> <name>, or --tree <path>");
 }

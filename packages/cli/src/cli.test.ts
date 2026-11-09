@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { filterFlagNames, flagNameFor, paramsFromFlags } from "./cli.ts";
+import { InvalidInputError } from "searchgres";
+import { z } from "zod";
+import {
+  filterFlagNames,
+  flagNameFor,
+  paramsFromFlags,
+  withSearchFlagNames,
+} from "./cli.ts";
+import { searchParamsSchema } from "./inputs.ts";
 
 /** Build the flag map Commander would hand `paramsFromFlags`. */
 function flags(...pairs: readonly [string, string | true][]) {
@@ -174,6 +182,91 @@ test("presentation selection is never included in search RPC params", () => {
   expect(search(["tree", "docs"], ["select", "id,content:200"])).toEqual({
     filter: { tree: "docs" },
   });
+});
+
+test("search validation errors name flags, not library fields", () => {
+  // These messages follow core's search option validation text.
+  const core = new InvalidInputError(
+    "Invalid search options: candidateLimit: candidateLimit only applies to a hybrid search (both semantic and fulltext)",
+    {
+      issues: [
+        {
+          code: "custom",
+          path: ["candidateLimit"],
+          message:
+            "candidateLimit only applies to a hybrid search (both semantic and fulltext)",
+        },
+        {
+          code: "custom",
+          path: ["semanticThreshold"],
+          message: "semanticThreshold requires a `semantic` or `vector` arm",
+        },
+        {
+          code: "custom",
+          path: ["order"],
+          message: "order only applies to a filter-only search",
+        },
+        {
+          code: "custom",
+          path: ["before"],
+          message: "provide either `after` or `before`, not both",
+        },
+        { code: "custom", path: ["k"], message: "k only applies to hybrid" },
+        {
+          code: "custom",
+          path: ["filter", "and", 0],
+          message: "unchanged filter issue",
+        },
+      ],
+    },
+  );
+  const rewritten = withSearchFlagNames(core);
+  expect(rewritten).toBeInstanceOf(InvalidInputError);
+  const error = rewritten as InvalidInputError;
+  expect(error.message).toBe(
+    "Invalid search options: --candidate-limit: --candidate-limit only applies to a hybrid search (both semantic and fulltext)",
+  );
+  expect(error.issues).toEqual([
+    {
+      code: "custom",
+      path: ["--candidate-limit"],
+      message:
+        "--candidate-limit only applies to a hybrid search (both semantic and fulltext)",
+    },
+    {
+      code: "custom",
+      path: ["--semantic-threshold"],
+      message: "--semantic-threshold requires a `--semantic` or `vector` arm",
+    },
+    {
+      code: "custom",
+      path: ["--order"],
+      message: "--order only applies to a filter-only search",
+    },
+    {
+      code: "custom",
+      path: ["--before"],
+      message: "provide either `--after` or `--before`, not both",
+    },
+    { code: "custom", path: ["k"], message: "k only applies to hybrid" },
+    {
+      code: "custom",
+      path: ["filter", "and", 0],
+      message: "unchanged filter issue",
+    },
+  ]);
+  // The original core error stays unchanged.
+  expect(core.issues[0]?.path).toEqual(["candidateLimit"]);
+
+  // The CLI's own schema reports flag paths too.
+  const parsed = searchParamsSchema.safeParse({ fulltext: "x", limit: 5000 });
+  expect(parsed.success).toBe(false);
+  const zodError = withSearchFlagNames(parsed.error) as z.ZodError;
+  expect(zodError).toBeInstanceOf(z.ZodError);
+  expect(zodError.issues.map((issue) => issue.path)).toEqual([["--limit"]]);
+
+  const other = new Error("other");
+  expect(withSearchFlagNames(other)).toBe(other);
 });
 
 test("flag names derive from leaf keys", () => {
