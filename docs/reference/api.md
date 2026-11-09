@@ -274,7 +274,7 @@ specific embedding error class.
 | `copyTree(source, destination, options?)` | `{ count }` | Fresh ids; conflicts throw `ConflictError`. |
 | `deleteTree(tree, options?)` | `{ count }` | Inclusive subtree. |
 | `countTree(selector, options?)` | `{ count, capped }` | Selector: one of `tree`/`lquery`/`ltxtquery`; `options.limit` caps. Malformed patterns throw `InvalidInputError`. |
-| `listTree(lquery)` | `readonly { tree, count }[]` | Matches `lquery` against record tree paths. Returns each matching record's path and its non-root ancestors, with the count of matching records at or under each. To list the children of a node, use `treeView(tree, { levels: 1 })`. A malformed `lquery` throws `InvalidInputError`. |
+| `listTree(lquery)` | `readonly { tree, count }[]` | Matches `lquery` against record tree paths. Returns each matching record's path and its non-root ancestors, with the count of matching records at or under each. To list a node and its direct children, use `treeView(tree, { levels: 1 })` (the node itself comes first). A malformed `lquery` throws `InvalidInputError`. |
 | `treeView(tree?, options?)` | `readonly { tree, count }[]` | Inclusive display tree rooted at `tree` (default: the whole index), with per-node descendant counts. `options.levels` bounds relative depth; a negative or non-integer value throws `InvalidInputError`. |
 
 ### Embeddings

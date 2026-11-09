@@ -277,8 +277,8 @@ await index.pruneEmbeddingQueue({ retentionMs: 604_800_000 });
 All durations are milliseconds.
 
 - **`batchSize`** (default: the model's `maxEmbeddingsPerCall`, or `10` when the
-  model reports no finite limit). Rows per claim and per provider call. A larger
-  value is capped at the model's limit.
+  model reports no finite limit). Rows per claim and per provider call. When the
+  model reports a finite limit, a larger value is capped at that limit.
 - **`leaseDurationMs`** (default `300000`) — how long a claimed row is hidden from
   other drainers. If a drainer crashes, its rows reappear after the lease.
 - **`maxAttempts`** (default `3`) — queue-claim attempt threshold used by each
