@@ -317,8 +317,10 @@ with one list and must be rebuilt after the first load:
    The CLI does not report vector index health.
 
 A rebuild of a large table can take longer than the default session timeouts
-(`database.session.statementTimeout: 30s`, `transactionTimeout: 35s`). For
-that run, raise both values in the config.
+(`database.session.statementTimeout: 30s`, `transactionTimeout: 35s`). Pass
+`--statement-timeout` (for example `--statement-timeout 30m`) to give the
+rebuild more time. The rebuild uses it as its statement and transaction
+timeout.
 
 If `init` reports `pg_vectorsearch` with reason `incomplete_setup`, a superuser
 must run `select public.pg_vectorsearch_setup_pgvector_compat()`.

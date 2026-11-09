@@ -51,6 +51,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/dev/shm` larger than `maintenance_work_mem`, and set `shm_size: 1g` in the
   evaluation Compose stack.
 
+### Documentation
+
+- CLI guide: document the experimental `prism` workflow (init, import, drain the
+  queue until `pending.total` is 0, run `vector-index reindex` once, then
+  evaluate), and which extensions `init` installs and which privileges that
+  needs.
+- Embeddings guide: show how to use a local or other OpenAI-compatible endpoint
+  with `createOpenAI({ baseURL, apiKey })`, and suggest an explicit `batchSize`
+  for local servers.
+- Getting started: explain how to silence or route `pg_textsearch` NOTICE
+  messages with the postgres.js `onnotice` option.
+- Explain exactly what `listTree` matches, and point to `treeView` to list the
+  children of a node.
+- Explain that `metaPredicate` must be a boolean JSONPath predicate. A bare
+  path matches nothing.
+- How search works: describe `prism`, and that a filtered `prism` semantic
+  search can return fewer rows than `limit`.
+
 ### Fixed
 
 - A wrong-dimension embedding model no longer loops forever. In
