@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The prefix counts toward the truncation budget. If the prefix alone does not
   fit, `InvalidConfigError` is thrown before any work is claimed, and the
   worker stops with `stopped: true`.
+- Add `index.deleteMany(ids)` and the schema-local routine
+  `<schema>.delete_records(uuid[])` to delete up to 1,000 records by id in one
+  statement. It returns `{ count }`. Missing and repeated ids are not an
+  error. The ingest guide shows a recipe that removes records whose source
+  document is gone.
 - Add `ensureExtensions(sql, options?)` to install required PostgreSQL
   extensions in `public` under a database-wide lock, and decouple extension
   installation from `createIndex` so index provisioning uses a per-schema lock.

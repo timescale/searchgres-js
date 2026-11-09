@@ -171,6 +171,7 @@ makes the filter-only cursor a chronological walk.
 | `patch(id, priorVersionHash, input)` | `StoredRecord` | Throws `NotFoundError` / `StaleVersionError`. |
 | `delete(id)` | `void` | Throws `NotFoundError`. |
 | `deleteByName(tree, name)` | `void` | Throws `NotFoundError`. |
+| `deleteMany(ids)` | `{ count }` | Deletes up to 1,000 records by id in one statement and returns how many were removed. Missing and repeated ids add nothing and are not an error. An invalid id throws `InvalidInputError`, and more than 1,000 ids throw `BatchTooLargeError`, before anything is deleted. |
 
 ```ts
 type StoredRecord = {

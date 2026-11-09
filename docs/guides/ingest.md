@@ -112,6 +112,50 @@ await index.upsertMany(
 );
 ```
 
+### Remove records whose source is gone
+
+`upsertMany` adds and updates records, but it does not remove a record whose
+source document was deleted. To sync a subtree with its source, list the
+records in that subtree with keyset pagination, compare their `(tree, name)`
+keys with the source, and delete the rest with `deleteMany`:
+
+```ts
+// The (tree, name) keys of the current source chunks under `docs`.
+const current = new Set(chunks.map((c) => `${c.tree}\u0000${c.name}`));
+
+const stale: string[] = [];
+let cursor: string | undefined;
+for (;;) {
+  const page = await index.search({
+    filter: { tree: "docs" },
+    order: "asc",
+    limit: 1000,
+    ...(cursor === undefined ? {} : { after: cursor }),
+  });
+  for (const record of page) {
+    if (!current.has(`${record.tree}\u0000${record.name}`)) {
+      stale.push(record.id);
+    }
+  }
+  if (page.length < 1000) break;
+  cursor = page.at(-1)?.id;
+}
+
+for (let i = 0; i < stale.length; i += 1000) {
+  await index.deleteMany(stale.slice(i, i + 1000));
+}
+```
+
+- The filter limits the sync to one subtree. Records outside it do not change.
+- The recipe assumes that every record in the subtree has a stable
+  `(tree, name)` from its source. A record without a name never matches a key,
+  so the recipe deletes it.
+- Run the upsert first, then this cleanup. A record that another process
+  writes during the listing can be missed (it stays) or, if its key is not in
+  `current`, deleted. If other writers share the subtree, coordinate the sync
+  with them.
+- If a whole subtree goes away, `deleteTree` removes it in one call.
+
 ### Import with stable ids
 
 For migrations or cross-system identity, supply your own UUIDv7 ids. An unnamed

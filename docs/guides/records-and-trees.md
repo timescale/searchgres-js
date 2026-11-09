@@ -63,6 +63,17 @@ await index.deleteByName("docs.api", "rate-limits");
 Both throw `NotFoundError` when nothing matched. Deleting a record also removes
 any queued embedding work for it.
 
+To delete many records, pass up to 1,000 ids to `deleteMany`. It runs one
+statement and returns how many records it removed. An id that does not exist
+is not an error:
+
+```ts
+const { count } = await index.deleteMany(ids);
+```
+
+To remove records whose source document is gone, see
+[Remove records whose source is gone](ingest.md#remove-records-whose-source-is-gone).
+
 ## Subtree operations
 
 Tree paths are raw dotted `ltree`. These operations are inclusive — they act on

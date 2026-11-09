@@ -41,6 +41,7 @@ export {
 } from "./migrate-index.ts";
 export * from "./open-index.ts";
 export type {
+  DeleteManyResult,
   PatchInput,
   ReindexVectorIndexOptions,
   StoredRecord,

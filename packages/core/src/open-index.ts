@@ -42,7 +42,9 @@ import {
 import { assertSchemaName } from "./identifiers.ts";
 import { runOperation } from "./operation.ts";
 import {
+  type DeleteManyResult,
   deleteByName,
+  deleteMany,
   deleteRecord,
   get,
   getByName,
@@ -117,6 +119,7 @@ export interface TransactionIndex {
   ): Promise<StoredRecord>;
   delete(id: string): Promise<void>;
   deleteByName(tree: string, name: string): Promise<void>;
+  deleteMany(ids: readonly string[]): Promise<DeleteManyResult>;
   moveTree(
     source: string,
     destination: string,
@@ -389,6 +392,23 @@ export class Index implements TransactionIndex {
   async deleteByName(tree: string, name: string): Promise<void> {
     return runIndexOperation(this, "searchgres.record.delete_by_name", () =>
       deleteByName(this, tree, name),
+    );
+  }
+
+  /**
+   * Delete up to 1,000 records by id in one statement. Ids that do not exist
+   * are not an error. Returns the number of records removed.
+   */
+  async deleteMany(ids: readonly string[]): Promise<DeleteManyResult> {
+    return runIndexOperation(
+      this,
+      "searchgres.record.delete_many",
+      async (span) => {
+        const result = await deleteMany(this, ids);
+        span.setAttribute("searchgres.result.count", result.count);
+        return result;
+      },
+      { "searchgres.batch.size": arrayLength(ids) },
     );
   }
 
