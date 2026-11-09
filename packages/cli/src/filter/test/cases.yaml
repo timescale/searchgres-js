@@ -217,3 +217,27 @@
     line: 1
     column: 9
     detail: unterminated JSON string
+
+- name: missing close parenthesis is reported at end of input
+  expression: (tree ignition.docs
+  error:
+    reason: syntax
+    line: 1
+    column: 20
+    detail: expected `)` to close `tree`
+
+- name: missing outer close parenthesis is reported at end of input
+  expression: (and (tree docs) (tree guides)
+  error:
+    reason: syntax
+    line: 1
+    column: 31
+    detail: expected `)` to close `and`
+
+- name: missing close parenthesis after meta is reported at end of input
+  expression: '(not (meta {"kind":"guide"})'
+  error:
+    reason: syntax
+    line: 1
+    column: 29
+    detail: expected `)` to close `not`

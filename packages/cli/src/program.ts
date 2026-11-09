@@ -24,6 +24,8 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
     )
     .showSuggestionAfterError()
     .exitOverride()
+    // bin.ts reports parse errors in the standard error envelope.
+    .configureOutput({ outputError: () => {} })
     .configureHelp({ showGlobalOptions: true })
     .version(LIBRARY_VERSION)
     .option(
@@ -210,7 +212,10 @@ export async function runProgram(argv: readonly string[]): Promise<void> {
     .option("--content <text>", "new content")
     .option("--tree <path>", "new raw dotted tree path")
     .option("--name <name>", "new name; an empty value clears it")
-    .option("--meta <json>", "replacement metadata JSON object")
+    .option(
+      "--meta <json>",
+      "metadata JSON object; replaces all existing metadata",
+    )
     .option("--temporal <start[,end]>", "new instant/interval; empty clears it")
     .option("--input <value>", "structured patch: inline, @file, or -")
     .option("--input-format <format>", "json, json5, or yaml");

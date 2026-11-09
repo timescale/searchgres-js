@@ -186,10 +186,12 @@ class Parser {
       while (this.peek() !== ")" && !this.atEnd()) {
         children.push(this.parseExpression(depth + 1));
         const separated = this.skipSpacing();
+        this.failIfUnclosed(operator);
         if (this.peek() !== ")" && !separated) {
           this.fail("syntax", "expected spacing between expressions");
         }
       }
+      this.failIfUnclosed(operator);
       if (children.length < 2) {
         this.fail(
           "arity",
@@ -208,6 +210,7 @@ class Parser {
       }
       const child = this.parseExpression(depth + 1);
       this.skipSpacing();
+      this.failIfUnclosed(operator);
       if (this.peek() !== ")") {
         this.fail("arity", "`not` requires exactly one expression", start);
       }
@@ -219,6 +222,7 @@ class Parser {
       this.requireSpacing("after `meta`");
       const value = this.parseJsonObject();
       this.skipSpacing();
+      this.failIfUnclosed(operator);
       if (this.peek() !== ")") {
         this.fail("arity", "`meta` requires exactly one JSON object", start);
       }
@@ -236,6 +240,7 @@ class Parser {
       values.push(this.parseText());
     }
     this.skipSpacing();
+    this.failIfUnclosed(operator);
     if (this.peek() !== ")") {
       this.fail(
         "arity",
@@ -358,6 +363,13 @@ class Parser {
       }
     }
     return this.offset > start;
+  }
+
+  /** Report a missing `)` at the end of input before any arity check. */
+  private failIfUnclosed(operator: Operator): void {
+    if (this.atEnd()) {
+      this.fail("syntax", `expected \`)\` to close \`${operator}\``);
+    }
   }
 
   private expectClose(operator: Operator, start: number): void {

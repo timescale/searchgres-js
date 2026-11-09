@@ -218,52 +218,50 @@ function projectRecord(
 ): ProjectedSearchResult {
   const projected: ProjectedSearchResult & { contentLength?: number } = {};
 
-  if (select.fields.has("id")) projected.id = result.id;
-  if (select.fields.has("content")) {
-    if (select.contentRange === undefined) projected.content = result.content;
-    else {
-      const points = [...result.content];
-      projected.content = points
-        .slice(select.contentRange.start, select.contentRange.end)
-        .join("");
-      projected.contentLength = points.length;
+  // Add fields in the order the caller selected them.
+  for (const field of select.fields) {
+    switch (field) {
+      case "content":
+        if (select.contentRange === undefined)
+          projected.content = result.content;
+        else {
+          const points = [...result.content];
+          projected.content = points
+            .slice(select.contentRange.start, select.contentRange.end)
+            .join("");
+          projected.contentLength = points.length;
+        }
+        break;
+      case "meta":
+        if (select.includeFullMeta) projected.meta = result.meta;
+        else {
+          const selectedMeta: typeof result.meta = {};
+          for (const key of select.metaKeys) {
+            if (!Object.hasOwn(result.meta, key)) continue;
+            const value = result.meta[key];
+            if (value === undefined) continue;
+            // Define rather than assign so a literal "__proto__" metadata key
+            // is projected as data instead of invoking Object.prototype's
+            // setter.
+            Object.defineProperty(selectedMeta, key, {
+              value,
+              enumerable: true,
+              configurable: true,
+              writable: true,
+            });
+          }
+          projected.meta = selectedMeta;
+        }
+        break;
+      case "temporal":
+        projected.temporal = presentTemporal(result.temporal);
+        break;
+      case "score":
+        if ("score" in result) projected.score = result.score;
+        break;
+      default:
+        projected[field] = result[field] as never;
     }
-  }
-  if (select.fields.has("meta")) {
-    if (select.includeFullMeta) projected.meta = result.meta;
-    else {
-      const selectedMeta: typeof result.meta = {};
-      for (const key of select.metaKeys) {
-        if (!Object.hasOwn(result.meta, key)) continue;
-        const value = result.meta[key];
-        if (value === undefined) continue;
-        // Define rather than assign so a literal "__proto__" metadata key is
-        // projected as data instead of invoking Object.prototype's setter.
-        Object.defineProperty(selectedMeta, key, {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      projected.meta = selectedMeta;
-    }
-  }
-  if (select.fields.has("tree")) projected.tree = result.tree;
-  if (select.fields.has("name")) projected.name = result.name;
-  if (select.fields.has("temporal"))
-    projected.temporal = presentTemporal(result.temporal);
-  if (select.fields.has("score") && "score" in result) {
-    projected.score = result.score;
-  }
-  if (select.fields.has("hasEmbedding")) {
-    projected.hasEmbedding = result.hasEmbedding;
-  }
-  if (select.fields.has("createdAt")) projected.createdAt = result.createdAt;
-  if (select.fields.has("updatedAt")) projected.updatedAt = result.updatedAt;
-  if (select.fields.has("version")) projected.version = result.version;
-  if (select.fields.has("versionHash")) {
-    projected.versionHash = result.versionHash;
   }
 
   return projected;
