@@ -404,7 +404,7 @@ claiming any queue row or running any query. Compare by identity:
 
 | Method | Returns | Notes |
 | --- | --- | --- |
-| `reindexVectorIndex(options?)` | `void` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index. For `prism` (experimental), it first runs `ANALYZE` on the record table so the rebuild sizes `nlist` from the current row count. Options: `concurrently?: boolean`, `lockTimeoutMs?: number`, `statementTimeoutMs?: number`. Rejects a transaction handle. searchgres does not report vector index health; for `prism`, see [Evaluate and maintain a `prism` index](../guides/indexes.md#evaluate-and-maintain-a-prism-index). |
+| `reindexVectorIndex(options?)` | `void` | Runs `REINDEX INDEX [CONCURRENTLY]` on the vector index. For `prism` (experimental), it first runs `ANALYZE` on the record table so the rebuild sizes `nlist` from the current row count. Options: `concurrently?: boolean`, `lockTimeoutMs?: number`, `statementTimeoutMs?: number` (also used as the rebuild's `transaction_timeout`, so a shorter session limit cannot end it). The timeouts apply to the rebuild's session only, and the prior values are restored after it. Rejects a transaction handle. searchgres does not report vector index health; for `prism`, see [Evaluate and maintain a `prism` index](../guides/indexes.md#evaluate-and-maintain-a-prism-index). |
 
 ### Transactions and lifecycle
 

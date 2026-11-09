@@ -606,6 +606,46 @@ test("creates, opens, and reindexes prism and hnsw vector indexes", async () => 
   }
 });
 
+test("reindex timeouts override a shorter session transaction_timeout", async () => {
+  const schema = randomTestSchema();
+  const pool = connectToDatabase(sql.options.database, 2);
+  try {
+    await createIndex(sql, schema, { dimensions: 4 });
+    for (const concurrently of [false, true]) {
+      // A session transaction_timeout ends the session when it fires. The
+      // rebuild waits on a lock for longer than that limit.
+      await pool`select pg_catalog.set_config('transaction_timeout', '500ms', false)`;
+      const index = await openIndex(pool, schema, { embedding: noEmbedding });
+      let release = () => {};
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let locked = () => {};
+      const lockHeld = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      const holder = sql.begin(async (tx) => {
+        await tx`lock table ${tx(schema)}.record in access exclusive mode`;
+        locked();
+        await released;
+      });
+      await lockHeld;
+      const rebuild = index.reindexVectorIndex({
+        concurrently,
+        lockTimeoutMs: 10_000,
+        statementTimeoutMs: 10_000,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      release();
+      await holder;
+      await rebuild;
+    }
+  } finally {
+    await pool.end();
+    await dropTestSchema(sql, schema);
+  }
+});
+
 test("a prism rebuild sizes its lists from the current row count", async () => {
   const schema = randomTestSchema();
   try {

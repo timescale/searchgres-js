@@ -89,7 +89,11 @@ export interface ReindexVectorIndexOptions {
   readonly concurrently?: boolean;
   /** Optional lock wait budget in milliseconds (`0` disables). */
   readonly lockTimeoutMs?: number;
-  /** Optional statement timeout in milliseconds (`0` disables). */
+  /**
+   * Optional statement timeout in milliseconds (`0` disables). The rebuild also
+   * uses it as its `transaction_timeout`, so a shorter session limit does not
+   * end the rebuild.
+   */
   readonly statementTimeoutMs?: number;
 }
 
@@ -324,39 +328,24 @@ export async function reindexVectorIndex(
   }
   const pool = sql as postgres.Sql;
 
-  if (concurrently) {
-    const reserved = await pool.reserve();
-    let priorLockTimeout: string | undefined;
-    let priorStatementTimeout: string | undefined;
-    try {
-      if (lockTimeoutMs !== undefined || statementTimeoutMs !== undefined) {
-        const [prior] = await runSql(
-          reserved<
-            {
-              readonly lock_timeout: string;
-              readonly statement_timeout: string;
-            }[]
-          >`
-            select
-              pg_catalog.current_setting('lock_timeout') as lock_timeout
-            , pg_catalog.current_setting('statement_timeout') as statement_timeout
-          `,
-          {
-            spanName: "readSessionTimeouts",
-            dbOperationName: "SELECT",
-            namespace: index.schema,
-          },
-        );
-        priorLockTimeout = prior?.lock_timeout;
-        priorStatementTimeout = prior?.statement_timeout;
-        await applyReindexTimeouts(
-          reserved,
-          index.schema,
-          lockTimeoutMs,
-          statementTimeoutMs,
-          false,
-        );
-      }
+  // PostgreSQL arms transaction_timeout when a transaction starts, and the
+  // timeout ends the session. So set the timeouts on one reserved session
+  // before the rebuild starts, and restore the prior values after it.
+  // statementTimeoutMs also sets transaction_timeout, so that a session limit
+  // cannot end a rebuild that the caller gave more time.
+  const reserved = await pool.reserve();
+  let prior: SessionTimeouts | undefined;
+  try {
+    if (lockTimeoutMs !== undefined || statementTimeoutMs !== undefined) {
+      prior = await readSessionTimeouts(reserved, index.schema);
+      await applyReindexTimeouts(
+        reserved,
+        index.schema,
+        lockTimeoutMs,
+        statementTimeoutMs,
+      );
+    }
+    if (concurrently) {
       await refreshPrismRowEstimate(reserved, index);
       await runSql(
         reserved`reindex index concurrently ${reserved(index.schema)}.${reserved(indexName)}`,
@@ -366,38 +355,71 @@ export async function reindexVectorIndex(
           namespace: index.schema,
         },
       );
-    } finally {
+    } else {
+      await reserved`begin`;
       try {
-        if (lockTimeoutMs !== undefined && priorLockTimeout !== undefined) {
-          await reserved`select pg_catalog.set_config('lock_timeout', ${priorLockTimeout}, false)`;
-        }
-        if (
-          statementTimeoutMs !== undefined &&
-          priorStatementTimeout !== undefined
-        ) {
-          await reserved`select pg_catalog.set_config('statement_timeout', ${priorStatementTimeout}, false)`;
-        }
-      } finally {
-        reserved.release();
+        await refreshPrismRowEstimate(reserved, index);
+        await runSql(
+          reserved`reindex index ${reserved(index.schema)}.${reserved(indexName)}`,
+          {
+            spanName: "reindexVectorIndex",
+            dbOperationName: "REINDEX",
+            namespace: index.schema,
+          },
+        );
+        await reserved`commit`;
+      } catch (error) {
+        await reserved`rollback`.catch(() => {});
+        throw error;
       }
     }
-  } else {
-    await pool.begin(async (tx) => {
-      await applyReindexTimeouts(
-        tx,
-        index.schema,
-        lockTimeoutMs,
-        statementTimeoutMs,
-        true,
-      );
-      await refreshPrismRowEstimate(tx, index);
-      await runSql(tx`reindex index ${tx(index.schema)}.${tx(indexName)}`, {
-        spanName: "reindexVectorIndex",
-        dbOperationName: "REINDEX",
-        namespace: index.schema,
-      });
-    });
+  } finally {
+    try {
+      if (prior !== undefined) {
+        await restoreSessionTimeouts(reserved, prior);
+      }
+    } finally {
+      reserved.release();
+    }
   }
+}
+
+interface SessionTimeouts {
+  readonly lock_timeout: string;
+  readonly statement_timeout: string;
+  readonly transaction_timeout: string;
+}
+
+async function readSessionTimeouts(
+  sql: postgres.ISql,
+  schema: string,
+): Promise<SessionTimeouts | undefined> {
+  const [row] = await runSql(
+    sql<SessionTimeouts[]>`
+      select
+        pg_catalog.current_setting('lock_timeout') as lock_timeout
+      , pg_catalog.current_setting('statement_timeout') as statement_timeout
+      , pg_catalog.current_setting('transaction_timeout') as transaction_timeout
+    `,
+    {
+      spanName: "readSessionTimeouts",
+      dbOperationName: "SELECT",
+      namespace: schema,
+    },
+  );
+  return row;
+}
+
+async function restoreSessionTimeouts(
+  sql: postgres.ISql,
+  prior: SessionTimeouts,
+): Promise<void> {
+  await sql`
+    select
+      pg_catalog.set_config('lock_timeout', ${prior.lock_timeout}, false)
+    , pg_catalog.set_config('statement_timeout', ${prior.statement_timeout}, false)
+    , pg_catalog.set_config('transaction_timeout', ${prior.transaction_timeout}, false)
+  `;
 }
 
 /**
@@ -422,11 +444,10 @@ async function applyReindexTimeouts(
   schema: string,
   lockTimeoutMs: number | undefined,
   statementTimeoutMs: number | undefined,
-  isLocal: boolean,
 ): Promise<void> {
   if (lockTimeoutMs !== undefined) {
     await runSql(
-      sql`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, ${isLocal})`,
+      sql`select pg_catalog.set_config('lock_timeout', ${`${lockTimeoutMs}ms`}, false)`,
       {
         spanName: "setLockTimeout",
         dbOperationName: "SET",
@@ -436,7 +457,11 @@ async function applyReindexTimeouts(
   }
   if (statementTimeoutMs !== undefined) {
     await runSql(
-      sql`select pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, ${isLocal})`,
+      sql`
+        select
+          pg_catalog.set_config('statement_timeout', ${`${statementTimeoutMs}ms`}, false)
+        , pg_catalog.set_config('transaction_timeout', ${`${statementTimeoutMs}ms`}, false)
+      `,
       {
         spanName: "setStatementTimeout",
         dbOperationName: "SET",
