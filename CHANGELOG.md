@@ -79,6 +79,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it an index. A `NotFoundError` for a `(tree, name)` address now reads
   `Record with tree "docs", name "intro" was not found` instead of
   `"docs/intro"`, which looked like a slash path.
+- CLI: argument errors (unknown option, conflicting options) now use the same
+  JSON error envelope as other errors, with code `INVALID_INPUT` and exit `2`.
+  When stderr is a terminal, all errors print as readable text instead of
+  JSON; other destinations get the same single JSON line as before.
+- CLI: a filter expression that is missing its closing `)` now reports
+  "expected `)`" at the end of input instead of an arity error.
+- CLI: search validation errors name the CLI flags (for example
+  `--candidate-limit`) instead of library option names.
+- CLI: the config dimension-limit error names the index method, vector type,
+  limit, and value.
+- CLI and MCP: selected fields are printed in the requested order.
+- CLI: `delete` prints the deleted record's id, or its tree and name, instead
+  of `{}`. `update --meta` help says that it replaces all metadata.
 - Filter validation errors now name the problem and its location: an unknown
   filter key (with a hint to use `meta` for metadata fields), a node with zero
   or several keys (with a hint to use `and`), or an invalid value at its full
