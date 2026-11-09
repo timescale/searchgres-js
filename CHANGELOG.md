@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Filter validation errors now name the problem and its location: an unknown
+  filter key (with a hint to use `meta` for metadata fields), a node with zero
+  or several keys (with a hint to use `and`), or an invalid value at its full
+  path (for example `filter.and.1.tree`). Before, most mistakes gave only
+  `filter: Invalid input`. The same messages apply to MCP filter input.
+- The exported `Filter` type now describes the filter shape. Before, it
+  resolved to `unknown`, so TypeScript did not check filters passed to
+  `search()`. Code that passed an invalid filter shape can now fail to compile.
 - **Security:** the compiled `searchgres` binary no longer loads `.env` or
   `bunfig.toml` from the current working directory. Bun standalone executables
   load both by default. A `bunfig.toml` `preload` entry could run arbitrary

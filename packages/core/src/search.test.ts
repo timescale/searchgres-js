@@ -68,6 +68,62 @@ test("rejects a filter node with more than one key", async () => {
   await rejects({ filter: { tree: "docs", regexp: "x" } });
 });
 
+async function filterError(
+  filter: unknown,
+): Promise<{ readonly message: string; readonly path: readonly unknown[] }> {
+  try {
+    await fakeIndex().search({ filter } as never);
+  } catch (error) {
+    assert.ok(error instanceof InvalidInputError);
+    const [issue] = error.issues;
+    assert.ok(issue);
+    return { message: error.message, path: issue.path };
+  }
+  assert.fail("expected an InvalidInputError");
+}
+
+test("filter errors name the problem and its location", async () => {
+  const unknownKey = await filterError({ page_title: "x" });
+  assert.match(unknownKey.message, /unknown filter key "page_title"/);
+  assert.match(unknownKey.message, /\{ meta: \{ "page_title": \.\.\. \} \}/);
+  assert.deepEqual(unknownKey.path, ["filter"]);
+
+  const twoKeys = await filterError({ tree: "docs", meta: { a: 1 } });
+  assert.match(
+    twoKeys.message,
+    /exactly one key, but it has 2 \("tree", "meta"\)\. Combine conditions with \{ and/,
+  );
+
+  assert.match(
+    (await filterError({})).message,
+    /exactly one key, but it has none/,
+  );
+  assert.match((await filterError("docs")).message, /expected a filter object/);
+
+  const nestedLeaf = await filterError({
+    and: [{ tree: "docs" }, { or: [{ tree: "a" }, { tree: 5 }] }],
+  });
+  assert.deepEqual(nestedLeaf.path, ["filter", "and", 1, "or", 1, "tree"]);
+  assert.match(
+    nestedLeaf.message,
+    /filter\.and\.1\.or\.1\.tree: .*expected string/,
+  );
+
+  const nestedKey = await filterError({ not: { bogus: 1 } });
+  assert.deepEqual(nestedKey.path, ["filter", "not"]);
+  assert.match(nestedKey.message, /filter\.not: unknown filter key "bogus"/);
+
+  const badTimestamp = await filterError({ temporalBefore: "yesterday" });
+  assert.deepEqual(badTimestamp.path, ["filter", "temporalBefore"]);
+  assert.doesNotMatch(badTimestamp.message, /Invalid input$/);
+
+  const emptyMeta = await filterError({ meta: {} });
+  assert.match(
+    emptyMeta.message,
+    /filter\.meta: meta filter must not be an empty object/,
+  );
+});
+
 test("rejects and/or with fewer than two children", async () => {
   await rejects({ filter: { and: [{ tree: "docs" }] } });
 });

@@ -389,6 +389,14 @@ test("all twelve MCP tools use the direct database; default worker, readonly, ze
         })
       ).results.length,
     ).toBe(3);
+    const badFilter = await client.callTool({
+      name: "searchgres_search",
+      arguments: { filter: { and: [{ tree: "mcp" }, { page_title: "x" }] } },
+    });
+    expect(badFilter.isError).toBe(true);
+    expect(JSON.stringify(badFilter.content)).toContain(
+      'and.1: unknown filter key \\"page_title\\"',
+    );
     await tool(client, "tree", { tree: "mcp" });
     expect(
       (await tool(client, "count", { selector: { tree: "mcp" } })).count,
