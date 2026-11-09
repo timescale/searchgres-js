@@ -540,3 +540,23 @@ as $func$
 $func$ language sql volatile security invoker
 set search_path to pg_catalog, public, pg_temp
 ;
+
+--------------------------------------------------------------------------------
+-- delete_records
+--------------------------------------------------------------------------------
+-- Delete every listed record that exists and return how many rows were
+-- removed. A missing id is not an error, so a sync can delete records that are
+-- already gone. Queue rows cascade via the FK.
+create or replace function {{schema_ident}}.delete_records(_ids uuid[])
+returns bigint
+as $func$
+  with deleted as
+  (
+    delete from {{schema_ident}}.record
+    where id = any (_ids)
+    returning 1
+  )
+  select count(*) from deleted
+$func$ language sql volatile security invoker
+set search_path to pg_catalog, public, pg_temp
+;

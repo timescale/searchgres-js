@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { z } from "zod";
 import { vectorIndexNameForMethod } from "./db/template.ts";
 import {
+  BatchTooLargeError,
   ConflictError,
   DimensionMismatchError,
   InvalidInputError,
@@ -277,6 +278,57 @@ function mapRecord(row: RecordRow): StoredRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** The most ids that one {@link deleteMany} call accepts. */
+const MAX_DELETE_BATCH_SIZE = 1000;
+
+/** The result of {@link deleteMany}. */
+export interface DeleteManyResult {
+  /** Records removed. Ids that did not exist, and repeated ids, add nothing. */
+  readonly count: number;
+}
+
+/**
+ * Delete up to 1,000 records by id in one statement. A missing id is not an
+ * error. An invalid id fails the whole call before anything is deleted.
+ */
+export async function deleteMany(
+  index: Index,
+  ids: readonly string[],
+): Promise<DeleteManyResult> {
+  if (!Array.isArray(ids)) {
+    throw new InvalidInputError("deleteMany expects an array of record ids", {
+      issues: [
+        { code: "invalid_type", message: "expected an array", path: [] },
+      ],
+    });
+  }
+  if (ids.length > MAX_DELETE_BATCH_SIZE) {
+    throw new BatchTooLargeError(ids.length, MAX_DELETE_BATCH_SIZE);
+  }
+  const parsed = z.array(idSchema).safeParse(ids);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map(toValidationIssue);
+    const first = issues[0];
+    throw new InvalidInputError(
+      `Invalid record ids: ${first ? `${first.path.join(".")}: ${first.message}` : "validation failed"}`,
+      { cause: parsed.error, issues },
+    );
+  }
+  const unique = [...new Set(parsed.data)];
+  if (unique.length === 0) {
+    return { count: 0 };
+  }
+  const { sql } = index;
+  const [row] = await runRecordSql(
+    sql<{ count: string }[]>`
+      select ${sql(index.schema)}.delete_records(${unique}::text[]::uuid[]) as count
+    `,
+    index.schema,
+    "deleteRecords",
+  );
+  return { count: Number(row?.count ?? 0) };
 }
 
 function parseId(id: string): string {

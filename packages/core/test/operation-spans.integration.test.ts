@@ -275,6 +275,11 @@ test("public index operations emit one domain span with safe useful attributes",
       name: "named",
     });
     await index.deleteByName("temp", "named");
+    const many = await index.upsertMany([
+      { content: "delete many one", tree: "temp" },
+      { content: "delete many two", tree: "temp" },
+    ]);
+    await index.deleteMany(many.map((result) => result.id));
 
     const appTracer = trace.getTracer("test/application");
     await sql.begin(async (tx) => {
@@ -311,6 +316,7 @@ test("public index operations emit one domain span with safe useful attributes",
       "searchgres.embedding.queue.prune",
       "searchgres.record.delete",
       "searchgres.record.delete_by_name",
+      "searchgres.record.delete_many",
       "searchgres.index.drop",
     ];
     for (const name of names) {
@@ -322,6 +328,10 @@ test("public index operations emit one domain span with safe useful attributes",
     assert.equal(upserted?.attributes["searchgres.record.id"], id);
     assert.equal(upserted?.attributes["searchgres.batch.size"], 1);
     assert.equal(upserted?.attributes["searchgres.result.count"], 1);
+
+    const deletedMany = operation("searchgres.record.delete_many");
+    assert.equal(deletedMany?.attributes["searchgres.batch.size"], 2);
+    assert.equal(deletedMany?.attributes["searchgres.result.count"], 2);
 
     const moved = operation("searchgres.tree.move");
     assert.equal(moved?.attributes["searchgres.tree.dry_run"], true);

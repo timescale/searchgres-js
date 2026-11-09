@@ -77,6 +77,8 @@ from docs_index.patch_record(
 
 select docs_index.delete_record('019ce89d-...'::uuid);
 select docs_index.delete_record_by_name('docs.api'::public.ltree, 'rate-limits');
+-- delete many by id; returns the number of rows removed (missing ids add 0)
+select docs_index.delete_records(array['019ce89d-...']::uuid[]);
 ```
 
 ## Tree operations
