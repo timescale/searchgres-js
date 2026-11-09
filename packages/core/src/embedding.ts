@@ -3,6 +3,7 @@ import {
   DimensionMismatchError,
   EmbeddingProviderError,
   EmbeddingUnavailableError,
+  InvalidConfigError,
   RateLimitError,
 } from "./errors.ts";
 import type { Index, IndexEmbeddingModel } from "./open-index.ts";
@@ -46,15 +47,54 @@ export function assertEmbeddingAvailable(
   }
 }
 
+/** What an embedding input is: record content, or semantic query text. */
+export type EmbeddingRole = "document" | "query";
+
+function prefixFor(index: Index, role: EmbeddingRole): string {
+  return role === "document" ? index.documentPrefix : index.queryPrefix;
+}
+
 /**
- * Embed one query string for search. Applies the index truncator, checks the
- * returned dimension, and maps provider failures to typed errors.
+ * Throw {@link InvalidConfigError} when the prefix for `role` does not fit the
+ * truncation budget. Every truncator returns a text that fits unchanged, so
+ * the prefix fits exactly when the truncator returns it unchanged. A cut
+ * prefix would make every input for this role wrong, so callers check before
+ * they claim work or call the provider.
+ */
+export async function assertPrefixFits(
+  index: Index,
+  role: EmbeddingRole,
+): Promise<void> {
+  const prefix = prefixFor(index, role);
+  if (prefix === "" || (await index.truncate(prefix)) === prefix) {
+    return;
+  }
+  const name = role === "document" ? "documentPrefix" : "queryPrefix";
+  throw new InvalidConfigError(
+    `${name} does not fit the truncation budget: the truncator shortens the prefix alone. Use a larger budget or a shorter prefix`,
+    {
+      issues: [
+        {
+          code: "custom",
+          message: "prefix exceeds the truncation budget",
+          path: [name],
+        },
+      ],
+    },
+  );
+}
+
+/**
+ * Embed one query string for search. Applies the query prefix and the index
+ * truncator, checks the returned dimension, and maps provider failures to
+ * typed errors.
  */
 export async function embedQuery(
   index: Index,
   text: string,
 ): Promise<readonly number[]> {
-  const [vector] = await embedTexts(index, [text]);
+  await assertPrefixFits(index, "query");
+  const [vector] = await embedTexts(index, [text], "query");
   if (!vector) {
     throw new EmbeddingProviderError("Embedding provider returned no vector");
   }
@@ -62,9 +102,12 @@ export async function embedQuery(
 }
 
 /**
- * Embed a batch of texts through the index's model. Truncation is applied per
- * value (identical policy to query embedding), every returned vector's length is
- * validated against the index dimensions, and errors are normalized:
+ * Embed a batch of texts through the index's model. The prefix for `role` is
+ * put before each value, and truncation is then applied per value (identical
+ * policy to query embedding), so the prefix counts toward the budget. Callers
+ * check the prefix with {@link assertPrefixFits} first. Every returned
+ * vector's length is validated against the index dimensions, and errors are
+ * normalized:
  *  - a provider rate limit → {@link RateLimitError} (carrying retry-after);
  *  - a wrong vector length → {@link DimensionMismatchError};
  *  - anything else → {@link EmbeddingProviderError}.
@@ -75,6 +118,7 @@ export async function embedQuery(
 export async function embedTexts(
   index: Index,
   texts: readonly string[],
+  role: EmbeddingRole,
 ): Promise<readonly (readonly number[])[]> {
   return runOperation(
     "searchgres.embedding.generate",
@@ -83,11 +127,13 @@ export async function embedTexts(
       attributes: { "searchgres.embedding.count": texts.length },
     },
     async (span) => {
+      const prefix = prefixFor(index, role);
+      const inputs = texts.map((text) => `${prefix}${text}`);
       const truncated = await Promise.all(
-        texts.map((text) => index.truncate(text)),
+        inputs.map((input) => index.truncate(input)),
       );
       const anyTruncated = truncated.some(
-        (value, position) => value.length !== texts[position]?.length,
+        (value, position) => value.length !== inputs[position]?.length,
       );
       span.setAttribute("searchgres.embedding.truncated", anyTruncated);
 

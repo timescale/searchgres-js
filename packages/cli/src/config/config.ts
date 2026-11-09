@@ -90,6 +90,9 @@ export const runtimeConfigSchema = z.strictObject({
       baseUrlEnv: envName.optional(),
       apiKeyEnv: envName.optional(),
       requestTimeout: positiveDuration.prefault("30s"),
+      // Literal text put before record content and query text for embedding.
+      documentPrefix: z.string().prefault(""),
+      queryPrefix: z.string().prefault(""),
       truncate: z
         .discriminatedUnion("kind", [
           z.strictObject({ kind: z.literal("none") }),

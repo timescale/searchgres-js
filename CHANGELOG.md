@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add optional `documentPrefix` and `queryPrefix` to `openIndex()` (and
+  `embedding.documentPrefix` / `embedding.queryPrefix` in CLI config) for
+  models that need task prefixes, such as Nomic's `search_document: ` and
+  `search_query: `. The worker puts `documentPrefix` before record content and
+  `search({ semantic })` puts `queryPrefix` before query text. Both default to
+  `""`. Stored content, full-text search, and supplied vectors do not change.
+  The prefix counts toward the truncation budget. If the prefix alone does not
+  fit, `InvalidConfigError` is thrown before any work is claimed, and the
+  worker stops with `stopped: true`.
 - Add `ensureExtensions(sql, options?)` to install required PostgreSQL
   extensions in `public` under a database-wide lock, and decouple extension
   installation from `createIndex` so index provisioning uses a per-schema lock.

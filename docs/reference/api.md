@@ -109,7 +109,9 @@ const index = await openIndex(sql, "docs_index", {
 | Option | Required | Notes |
 | --- | --- | --- |
 | `embedding` | yes | An AI SDK embedding model object (for example `openai.embedding("text-embedding-3-small")`), or [`noEmbedding`](#noembedding) for a handle that never generates vectors. A model id string is rejected with `InvalidConfigError`: the AI SDK sends a model id string to its global default provider, which is the Vercel AI Gateway unless the application sets another one. To use the gateway, pass its model object explicitly. |
-| `truncate` | no | A `Truncator`; defaults to `noTruncation`. |
+| `truncate` | no | A `Truncator`; defaults to `noTruncation`. With a prefix, it gets the prefixed text. |
+| `documentPrefix` | no | Literal text put before record content for embedding (for example `"search_document: "`). Defaults to `""`. See [Document and query prefixes](../guides/embeddings.md#document-and-query-prefixes). |
+| `queryPrefix` | no | Literal text put before `semantic` query text for embedding (for example `"search_query: "`). Defaults to `""`. |
 
 Options are validated before any database access; an invalid or missing option
 throws [`InvalidConfigError`](errors.md). Unknown keys are rejected. Otherwise
@@ -320,7 +322,7 @@ type WorkerErrorContext = {
   phase: "process" | "prune";
   consecutiveErrors: number;  // failed passes in a row; rate limits excluded
   backoffMs: number;          // sleep before the next attempt
-  stopped: boolean;           // true after DimensionMismatchError: no more claims
+  stopped: boolean;           // true after a configuration fault: no more claims
 };
 
 type EmbeddingWorker = { stop(): Promise<void> };

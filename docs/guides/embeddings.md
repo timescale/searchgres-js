@@ -56,6 +56,59 @@ The default batch size comes from the model (see [Tuning](#tuning)). For
 overload a local or self-hosted server. Set `batchSize` explicitly for those
 endpoints; 16 to 64 is a reasonable starting point to tune from.
 
+### Document and query prefixes
+
+Some models need a task prefix on each input, with a different prefix for
+documents and for queries. For example, Nomic embedding models expect
+`search_document: ` before document text and `search_query: ` before query
+text. Without them, requests succeed and vectors have the right size, but
+retrieval quality drops with no error. Set the prefixes on `openIndex()`:
+
+```ts
+const index = await openIndex(sql, "docs_index", {
+  embedding: local.embedding("nomic-embed-text"),
+  documentPrefix: "search_document: ",
+  queryPrefix: "search_query: ",
+});
+```
+
+- `documentPrefix` goes before record content when the worker or
+  `processEmbeddings()` embeds it. `queryPrefix` goes before `semantic` text in
+  `search()`. Each input gets only the prefix for its role.
+- Both default to `""`. The prefixes are literal text: include any space the
+  model expects. searchgres does not infer prefixes from model names.
+- Stored content, full-text (BM25) search, and vectors that you supply do not
+  change.
+- Check the model card for the exact values. Also check that your server does
+  not already add a prefix (some servers apply the model's prompt
+  configuration). A prefix applied twice also lowers quality.
+
+**Truncation.** The truncator gets the prefixed text, so the prefix counts
+toward its budget, and the truncator keeps the start of the text, so the
+prefix stays complete. All built-in truncators keep the start; a custom
+truncator must do the same. If the prefix alone does not fit the budget,
+searchgres throws `InvalidConfigError` before it claims work or calls the
+provider: `processEmbeddings()` throws, the worker stops with
+`stopped: true`, and `search({ semantic })` throws. Keep the prefix well
+below the budget, because each token of the prefix is a token less of
+content.
+
+**Consistent policy.** Prefixes are runtime policy, like the model and the
+truncator. They are not stored in the database. Every process that embeds
+records or queries for an index must use the same prefixes. A vector reflects
+the prefix that was in use when it was embedded, so after you change
+`documentPrefix`, re-embed the existing records. To keep semantic search
+available during the change, [rebuild into a new index and cut
+over](indexes.md#rebuild-and-cut-over). To re-embed in place, clear the
+vectors and drain the queue with the new prefix. Until a record is embedded
+again, semantic search does not find it:
+
+```sql
+update docs_index.record set embedding = null;
+```
+
+The record triggers queue each cleared record for embedding.
+
 ## Supplying a vector yourself
 
 If you already have a vector, pass it and no queue work is created:
@@ -159,7 +212,9 @@ failures outside the guarded loop still stop the worker.
 
 A `DimensionMismatchError` stops the worker. The rows of that batch fail
 permanently (see [Drain on demand](#drain-on-demand)), the callback gets
-`stopped: true`, and the worker claims no more work. A retry with the same model
+`stopped: true`, and the worker claims no more work. A `documentPrefix` that
+does not fit the truncation budget also stops the worker, with an
+`InvalidConfigError`, before it claims any row. A retry with the same model
 cannot succeed. Fix the configuration, retry the failures, and start a new
 worker with a corrected handle. `stop()` still resolves normally.
 

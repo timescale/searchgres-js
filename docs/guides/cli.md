@@ -72,6 +72,15 @@ The binary uses the AI SDK OpenAI embedding model. Correct endpoint configuratio
 and consistency of the model/truncation policy across all readers and workers
 are the user's responsibility. Matching dimensions do not prove matching models.
 
+`embedding.documentPrefix` and `embedding.queryPrefix` set literal text that is
+put before record content and before `search --semantic` text when they are
+embedded, for models that need task prefixes (for example
+`documentPrefix: "search_document: "` and `queryPrefix: "search_query: "` for
+Nomic models). Both default to `""`. Quote them in YAML to keep the trailing
+space. They count toward the truncation budget, must be the same for every
+process that uses the index, and a `documentPrefix` change needs a re-embed.
+See [Document and query prefixes](embeddings.md#document-and-query-prefixes).
+
 Truncation is supplied to core. Available modes are `none`, `characters`/`bytes`
 with `max`, and `tokens` with `tokenizer`/`maxTokens`. Exact tokenizer presets:
 
