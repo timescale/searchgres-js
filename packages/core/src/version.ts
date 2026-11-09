@@ -8,4 +8,4 @@
  * This is package metadata only. Immutable index schemas use their own format
  * marker and never derive compatibility from the library package version.
  */
-export const LIBRARY_VERSION = "0.3.2";
+export const LIBRARY_VERSION = "0.4.0";

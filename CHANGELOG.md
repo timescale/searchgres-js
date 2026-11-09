@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-09
+
+### Upgrade notes
+
+- **Schema format 3.** Existing format-2 indexes must be upgraded once with
+  `migrateIndex(sql, schema)` or `searchgres migrate`, during a maintenance
+  window and as the schema owner. `openIndex()` rejects a format-2 index until
+  then, and the upgrade is one-way: 0.3.x reads no format-3 index.
+- **Install `postgres` yourself.** postgres.js is now a peer dependency
+  (`^3.4.9 || ^4.1.0`): `npm install searchgres postgres`.
+- **`IndexConfig.hnsw` is replaced by `vectorIndex`**
+  (`{ method: "hnsw", m?, efConstruction? }`).
+- **`openIndex()` rejects a model id string** for `embedding`. Pass a provider
+  model object, for example `openai.embedding("text-embedding-3-small")`.
+- **The `Filter` type is now checked**, so code that passed an invalid filter
+  shape can fail to compile.
+- **CLI error output.** Argument errors now use the JSON error envelope, and
+  errors print as readable text when stderr is a terminal. Scripts that read
+  stderr through a pipe get the same single JSON line as before.
+
 ### Added
 
 - CLI parity with MCP: `get --select`, `search --k` (the hybrid RRF rank
@@ -45,7 +65,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `searchgres vector-index reindex` to rebuild the vector index
   (`concurrently`, `lockTimeoutMs`, `statementTimeoutMs`). For `prism`, the
   rebuild runs `ANALYZE` first so it sizes its lists from the current row
-  count.
+  count. The timeouts are set on the rebuild's session before it starts, and
+  `statementTimeoutMs` also sets `transaction_timeout`, so a shorter session
+  limit (the CLI default is 35s) cannot end a long rebuild.
+- `ProcessEmbeddingsResult` has a new `sampleError` field: the first error that
+  made rows fail in the pass, or `null`. Before, a pass that failed (for example
+  with a mistyped model id) returned only counts. The CLI prints only its safe
+  error class (for example `HTTP 404`).
 
 ### Changed
 
@@ -66,11 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   errors, and add a safe failure class (HTTP status, SQLSTATE, or system
   error code) to provider and database failures. Previously most of these
   printed only `searchgres.js operation failed (CODE)`.
-- Document that Docker containers that build a `prism` index need
-  `/dev/shm` larger than `maintenance_work_mem`, and set `shm_size: 1g` in the
-  evaluation Compose stack.
+- Set `shm_size: 1g` in the evaluation Compose stack, so it can build a
+  `prism` index.
 
 ### Documentation
+
+- Document that Docker containers that build a `prism` index need
+  `/dev/shm` larger than `maintenance_work_mem`.
 
 - CLI guide: document the experimental `prism` workflow (init, import, drain the
   queue until `pending.total` is 0, run `vector-index reindex` once, then
@@ -100,15 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The CLI `embeddings worker` command exits `1` when all its workers stop. A
   new schema-local routine, `<schema>.fail_embedding_permanently()`, records
   these failures.
-- `ProcessEmbeddingsResult` has a new `sampleError` field: the first error that
-  made rows fail in the pass, or `null`. Before, a pass that failed (for example
-  with a mistyped model id) returned only counts. The CLI prints only its safe
-  error class (for example `HTTP 404`).
-- `reindexVectorIndex({ statementTimeoutMs })` now also applies the value to
-  `transaction_timeout`, and sets the timeouts before the rebuild's transaction
-  starts. Before, a session `transaction_timeout` shorter than the rebuild (the
-  CLI default is 35s) ended the session in the middle of a rebuild, whatever
-  `statementTimeoutMs` or `--statement-timeout` said.
 - Clearer validation and error messages: a UUID that is not a UUIDv7 now says
   `expected a UUIDv7`, and a timestamp without an offset says it needs a UTC
   offset or `Z`. An invalid schema name now carries `issues`. `createIndex()`
