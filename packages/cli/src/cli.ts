@@ -167,7 +167,7 @@ async function runSearch(client: Index, flags: Flags): Promise<void> {
 }
 
 /** Core search option names that have a `search` flag. */
-const searchOptionFlags: Readonly<Record<string, string>> = {
+export const searchOptionFlags: Readonly<Record<string, string>> = {
   semantic: "--semantic",
   fulltext: "--fulltext",
   limit: "--limit",

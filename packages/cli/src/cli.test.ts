@@ -5,6 +5,7 @@ import {
   filterFlagNames,
   flagNameFor,
   paramsFromFlags,
+  searchOptionFlags,
   withSearchFlagNames,
 } from "./cli.ts";
 import { searchParamsSchema } from "./inputs.ts";
@@ -277,3 +278,13 @@ test("flag names derive from leaf keys", () => {
 function camelCase(flag: string): string {
   return flag.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
 }
+
+test("every search parameter with a flag has a flag-name mapping", () => {
+  // `filter` comes from several flags, and `k` has no flag yet.
+  const withoutFlag = new Set(["filter", "k"]);
+  expect(
+    Object.keys(searchParamsSchema.shape)
+      .filter((key) => !withoutFlag.has(key))
+      .sort(),
+  ).toEqual(Object.keys(searchOptionFlags).sort());
+});

@@ -289,8 +289,8 @@ as an unknown option) is one JSON line:
 
 Validation failures can add `issues`, an array of `{code, path, message}`.
 When stderr is a terminal, the same error is printed as text, with the
-message's line breaks kept (for example, a filter error's caret diagram) and
-one line for each issue:
+message's line breaks kept (for example, a filter error's caret diagram). When
+the error has issues, one `  - path: message` line follows for each issue:
 
 ```text
 error [INVALID_INPUT]: Invalid filter expression: --filter:1:20: expected `)` to close `tree`
