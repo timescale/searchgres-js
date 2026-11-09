@@ -142,13 +142,19 @@ export interface TransactionIndex {
   ): Promise<readonly TreeListEntry[]>;
 }
 
+/** An AI SDK `EmbeddingModel` object. Model id strings are not accepted. */
+export type IndexEmbeddingModel = Exclude<EmbeddingModel, string>;
+
 export interface OpenIndexOptions {
   /**
-   * Any AI SDK `EmbeddingModel` (a provider model object or a registry model
-   * id string), or {@link noEmbedding} for a handle that never generates
-   * vectors.
+   * An AI SDK embedding model object (for example
+   * `openai.textEmbeddingModel("text-embedding-3-small")`), or
+   * {@link noEmbedding} for a handle that never generates vectors. A model id
+   * string is rejected: the AI SDK resolves it through its global default
+   * provider, which is the Vercel AI Gateway unless the application sets
+   * another one.
    */
-  readonly embedding: EmbeddingModel;
+  readonly embedding: IndexEmbeddingModel;
   /**
    * Applied to record content (by the worker) and to `semantic` query text
    * before embedding. Runtime policy only — not persisted. Defaults to
@@ -163,7 +169,7 @@ export class Index implements TransactionIndex {
   readonly dimensions: number;
   /** Vector index access method. `prism` is experimental. */
   readonly vectorIndex: VectorIndexMethod;
-  readonly embedding: EmbeddingModel;
+  readonly embedding: IndexEmbeddingModel;
   readonly truncate: Truncator;
 
   /** @internal Caller-owned pool or transaction used by every method. */
@@ -176,7 +182,7 @@ export class Index implements TransactionIndex {
     vectorType: "vector" | "halfvec";
     dimensions: number;
     vectorIndex: VectorIndexMethod;
-    embedding: EmbeddingModel;
+    embedding: IndexEmbeddingModel;
     truncate: Truncator;
   }) {
     this.sql = options.sql;
@@ -634,26 +640,24 @@ function runTreeOperation(
 }
 
 /**
- * Shape check only. A string model id is resolved by the AI SDK's provider
- * registry at embed time, and an object model is anything with `doEmbed` (the
- * one member every `EmbeddingModelV*` spec shares). Model identity and
- * dimensions are deliberately not probed here; the embedding column typmod is
- * enforced at write-back (`DimensionMismatchError`).
+ * Shape check only. A model is any object with `doEmbed` (the one member every
+ * `EmbeddingModelV*` spec shares). A model id string is rejected, because the
+ * AI SDK resolves it through its global default provider (the Vercel AI
+ * Gateway by default), which is a silent third-party data path. Model identity
+ * and dimensions are deliberately not probed here; the embedding column typmod
+ * is enforced at write-back (`DimensionMismatchError`).
  */
 const openIndexOptionsSchema = z.strictObject({
-  embedding: z.union(
-    [
-      z.string().min(1),
-      z.custom<object>(
-        (value) =>
-          typeof value === "object" &&
-          value !== null &&
-          typeof (value as { doEmbed?: unknown }).doEmbed === "function",
-      ),
-    ],
+  embedding: z.custom<IndexEmbeddingModel>(
+    (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { doEmbed?: unknown }).doEmbed === "function",
     {
-      error:
-        "expected an AI SDK EmbeddingModel (a model id string or an object with doEmbed), or noEmbedding",
+      error: (issue) =>
+        typeof issue.input === "string"
+          ? "expected an AI SDK embedding model object, not a model id string (the AI SDK sends a model id string to its global default provider, which is the Vercel AI Gateway unless you set another one). Pass a provider model, for example openai.textEmbeddingModel(...), or noEmbedding"
+          : "expected an AI SDK embedding model object (with doEmbed), or noEmbedding",
     },
   ),
   truncate: z

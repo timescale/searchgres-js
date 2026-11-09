@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The exported `Filter` type now describes the filter shape. Before, it
   resolved to `unknown`, so TypeScript did not check filters passed to
   `search()`. Code that passed an invalid filter shape can now fail to compile.
+- `openIndex()` now rejects a model id string for `embedding` with
+  `InvalidConfigError`. The AI SDK resolves a string through its global
+  default provider, which is the Vercel AI Gateway unless the application sets
+  another one, so a string could send record and query text to a third party
+  without any explicit choice. Pass a provider model object instead (for
+  example `openai.embedding("text-embedding-3-small")`). The `embedding` option
+  type is now `IndexEmbeddingModel` (`EmbeddingModel` without `string`).
 - **Security:** the compiled `searchgres` binary no longer loads `.env` or
   `bunfig.toml` from the current working directory. Bun standalone executables
   load both by default. A `bunfig.toml` `preload` entry could run arbitrary

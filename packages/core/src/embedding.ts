@@ -1,11 +1,11 @@
-import { type EmbeddingModel, embed, embedMany } from "ai";
+import { embed, embedMany } from "ai";
 import {
   DimensionMismatchError,
   EmbeddingProviderError,
   EmbeddingUnavailableError,
   RateLimitError,
 } from "./errors.ts";
-import type { Index } from "./open-index.ts";
+import type { Index, IndexEmbeddingModel } from "./open-index.ts";
 import { runOperation } from "./operation.ts";
 
 /** Fallback when a model reports no finite `maxEmbeddingsPerCall`. */
@@ -23,7 +23,7 @@ export const MAX_ERROR_LENGTH = 2048;
  * `EmbeddingUnavailableError` before touching the queue or the database.
  * Compare by identity: `index.embedding === noEmbedding`.
  */
-export const noEmbedding: EmbeddingModel = Object.freeze({
+export const noEmbedding: IndexEmbeddingModel = Object.freeze({
   specificationVersion: "v4" as const,
   provider: "searchgres",
   modelId: "none",

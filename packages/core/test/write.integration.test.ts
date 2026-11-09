@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import type { Sql } from "postgres";
 import { createIndex } from "../src/create-index.ts";
+import { noEmbedding } from "../src/embedding.ts";
 import {
   BatchTooLargeError,
   ConflictError,
@@ -26,7 +27,7 @@ test("upsert methods preserve input order, normalize temporal values, and queue 
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
     const point = new Date("2026-01-02T03:04:05.678Z");
     const intervalStart = new Date("2026-02-03T04:05:06.789Z");
     const intervalEnd = "2026-02-04T06:05:06.789+01:00";
@@ -127,7 +128,7 @@ test("insert conflicts roll back the full batch and ignore reports skipped input
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
     const existing = await index.upsert({
       content: "existing",
       tree: "docs",
@@ -192,7 +193,7 @@ test("upsert replaces by default, preserves current embeddings, and skips unchan
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
     const created = await index.upsert({
       content: "first",
       tree: "docs",
@@ -295,7 +296,7 @@ test("ignore resolves a concurrently committed named conflict", async () => {
   let releaseWriter: (() => void) | undefined;
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
     let writerInserted!: () => void;
     const release = new Promise<void>((resolve) => {
       releaseWriter = resolve;
@@ -349,7 +350,7 @@ test("upsert and patch reject empty content and empty names", async () => {
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
 
     await assert.rejects(
       () => index.upsert({ content: "" }),
@@ -427,7 +428,7 @@ test("upsert validates temporal values, caps batches, and rejects wrong vector d
   const schema = randomTestSchema();
   try {
     await createIndex(sql, schema, { dimensions: 4 });
-    const index = await openIndex(sql, schema, { embedding: "mock-embedding" });
+    const index = await openIndex(sql, schema, { embedding: noEmbedding });
 
     await assert.rejects(
       () =>
